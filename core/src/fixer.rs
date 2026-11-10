@@ -23,13 +23,29 @@ pub fn temp_name() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{TEMP_PREFIX}{}-{nanos:x}-{n}{TEMP_SUFFIX}", std::process::id())
+    format!(
+        "{TEMP_PREFIX}{}-{nanos:x}-{n}{TEMP_SUFFIX}",
+        std::process::id()
+    )
 }
 
 pub fn is_temp(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with(TEMP_PREFIX) && n.ends_with(TEMP_SUFFIX))
+        .and_then(|n| n.strip_prefix(TEMP_PREFIX))
+        .and_then(|n| n.strip_suffix(TEMP_SUFFIX))
+        .is_some_and(|n| {
+            let parts: Vec<_> = n.split('-').collect();
+            parts.len() == 3
+                && !parts[0].is_empty()
+                && parts[0].bytes().all(|b| b.is_ascii_digit())
+                && !parts[1].is_empty()
+                && parts[1]
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                && !parts[2].is_empty()
+                && parts[2].bytes().all(|b| b.is_ascii_digit())
+        })
 }
 
 pub fn last_line(text: &str) -> String {
@@ -99,7 +115,9 @@ fn run(program: &Path, args: &[String]) -> Result<std::process::Output, String> 
         .stdin(Stdio::null())
         .output()
         .map_err(|e| {
-            let name = program.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            let name = program
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
             if e.kind() == io::ErrorKind::NotFound {
                 format!("{name} was not found")
             } else {
@@ -152,7 +170,11 @@ pub fn fix(tools: &Ffmpeg, input: &Path, outbox: &Path) -> Result<PathBuf, Strin
         args.push(format!("album={artist}"));
     }
     let temp = outbox.join(temp_name());
-    args.extend(["-f".into(), plan.ext.into(), temp.to_string_lossy().into_owned()]);
+    args.extend([
+        "-f".into(),
+        plan.ext.into(),
+        temp.to_string_lossy().into_owned(),
+    ]);
 
     let result = (|| {
         let out = run(&tools.ffmpeg, &args)?;
@@ -167,11 +189,18 @@ pub fn fix(tools: &Ffmpeg, input: &Path, outbox: &Path) -> Result<PathBuf, Strin
         if let Some(problem) = rules::verify(&out_info, out_tags, plan.ext) {
             return Err(problem);
         }
+        fs::File::open(&temp)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| format!("outbox: {e}"))?;
         let stem = input
             .file_stem()
             .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-        publish(&temp, outbox, &rules::safe_stem(&stem, plan.ext), plan.ext)
-            .map_err(|e| format!("outbox: {e}"))
+        let target = publish(&temp, outbox, &rules::safe_stem(&stem, plan.ext), plan.ext)
+            .map_err(|e| format!("outbox: {e}"))?;
+        fs::File::open(outbox)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| format!("outbox: {e}"))?;
+        Ok(target)
     })();
     let _ = fs::remove_file(&temp);
     result
@@ -212,7 +241,10 @@ mod tests {
         let info = parse_probe(json).unwrap();
         let audio = info.audio.unwrap();
         assert_eq!(audio.codec, "flac");
-        assert_eq!((audio.rate, audio.bits, audio.channels), (48000, Some(24), 2));
+        assert_eq!(
+            (audio.rate, audio.bits, audio.channels),
+            (48000, Some(24), 2)
+        );
         assert!(info.has_art);
         assert_eq!(info.tags["title"], "Name");
         assert_eq!(info.tags["artist"], "Format Artist");
@@ -232,6 +264,8 @@ mod tests {
         assert!(is_temp(Path::new(&a)));
         assert!(!is_temp(Path::new("song.mp3")));
         assert!(!is_temp(Path::new(".sansa-x.mp3")));
+        assert!(!is_temp(Path::new(".sansa-other.part")));
+        assert!(!is_temp(Path::new(".sansa-1-abc-2-extra.part")));
     }
 
     #[test]

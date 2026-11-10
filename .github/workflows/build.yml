@@ -1,0 +1,65 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to put in the AppImage
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  CI:
+    runs-on: ubuntu-latest
+    container:
+      # The AppImage links the host Qt, so keep this on the same Fedora release as the supported desktop.
+      image: registry.fedoraproject.org/fedora:45@sha256:3632de47c2cef45d6a6ea6a420280ff9ce452e225a1b291299c105b9d9bae471
+    env:
+      SANSA_DL_VERSION: ${{ inputs.version }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            gcc gcc-c++ rust cargo clippy rustfmt \
+            qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kirigami qqc2-desktop-style \
+            curl jq unzip tar xz xz-devel squashfs-tools git findutils file which pkgconf-pkg-config
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Fetch tools
+        run: packaging/appimage/fetch-tools.sh build/tools
+
+      - name: Test
+        run: PATH="$PWD/build/tools:$PATH" cargo test --workspace
+
+      - name: Build the AppImage
+        run: |
+          if [ -z "$SANSA_DL_VERSION" ]; then unset SANSA_DL_VERSION; fi
+          packaging/appimage/build.sh
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sansa-dl-appimage
+          path: |
+            dist/*.AppImage
+            dist/*.AppImage.sha256
+          if-no-files-found: error

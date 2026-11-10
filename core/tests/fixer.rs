@@ -13,10 +13,18 @@ fn tools() -> Option<Ffmpeg> {
             .map(|dir| dir.join(name))
             .find(|p| p.is_file())
     };
-    Some(Ffmpeg {
+    let tools = Ffmpeg {
         ffmpeg: find("ffmpeg")?,
         ffprobe: find("ffprobe")?,
-    })
+    };
+    // The fixtures are mp3 and flac, so a build without LAME cannot make them.
+    let encoders = Command::new(&tools.ffmpeg)
+        .args(["-hide_banner", "-encoders"])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&encoders.stdout)
+        .contains("libmp3lame")
+        .then_some(tools)
 }
 
 macro_rules! need_ffmpeg {
@@ -24,7 +32,7 @@ macro_rules! need_ffmpeg {
         match tools() {
             Some(t) => t,
             None => {
-                eprintln!("skipped: ffmpeg not found");
+                eprintln!("skipped: ffmpeg with libmp3lame not found");
                 return;
             }
         }
@@ -50,7 +58,19 @@ fn big_cover(tools: &Ffmpeg, dir: &Path) -> PathBuf {
     let cover = dir.join("cover.jpg");
     run(
         tools,
-        &["-f", "lavfi", "-i", "color=c=gray:s=1600x1600", "-vf", "noise=alls=100:allf=t+u", "-frames:v", "1", "-q:v", "1", s(&cover)],
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:s=1600x1600",
+            "-vf",
+            "noise=alls=100:allf=t+u",
+            "-frames:v",
+            "1",
+            "-q:v",
+            "1",
+            s(&cover),
+        ],
     );
     assert!(fs::metadata(&cover).unwrap().len() > ID3_LIMIT);
     cover
@@ -62,11 +82,33 @@ fn mp3_with_cover(tools: &Ffmpeg, dir: &Path) -> PathBuf {
     run(
         tools,
         &[
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=1:sample_rate=48000",
-            "-i", s(&cover), "-map", "0:a", "-map", "1:v", "-c:a", "libmp3lame", "-b:a", "96k",
-            "-c:v", "copy", "-id3v2_version", "3",
-            "-metadata", "title=Cover Song", "-metadata", "artist=Some Artist",
-            "-metadata:s:v", "title=Album cover", "-disposition:v", "attached_pic", s(&out),
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1:sample_rate=48000",
+            "-i",
+            s(&cover),
+            "-map",
+            "0:a",
+            "-map",
+            "1:v",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "96k",
+            "-c:v",
+            "copy",
+            "-id3v2_version",
+            "3",
+            "-metadata",
+            "title=Cover Song",
+            "-metadata",
+            "artist=Some Artist",
+            "-metadata:s:v",
+            "title=Album cover",
+            "-disposition:v",
+            "attached_pic",
+            s(&out),
         ],
     );
     out
@@ -90,7 +132,10 @@ fn strips_a_huge_cover_from_an_mp3_and_keeps_tags() {
     assert!(rules::id3_size_of(&fixed).unwrap() < ID3_LIMIT);
     assert_eq!(info.tags["title"], "Cover Song");
     assert_eq!(info.tags["artist"], "Some Artist");
-    assert_eq!(info.tags["album"], "Some Artist", "empty album takes the artist");
+    assert_eq!(
+        info.tags["album"], "Some Artist",
+        "empty album takes the artist"
+    );
     assert!(input.exists(), "the input stays");
     let leftovers = fs::read_dir(&outbox).unwrap().count();
     assert_eq!(leftovers, 1, "no temp files");
@@ -104,12 +149,24 @@ fn keeps_an_existing_album() {
     run(
         &tools,
         &[
-            "-f", "lavfi", "-i", "sine=duration=1", "-c:a", "libmp3lame",
-            "-metadata", "artist=A", "-metadata", "album=B", s(&input),
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=1",
+            "-c:a",
+            "libmp3lame",
+            "-metadata",
+            "artist=A",
+            "-metadata",
+            "album=B",
+            s(&input),
         ],
     );
     let fixed = fixer::fix(&tools, &input, &dir.path().join("outbox")).unwrap();
-    assert_eq!(fixer::probe(&tools.ffprobe, &fixed).unwrap().tags["album"], "B");
+    assert_eq!(
+        fixer::probe(&tools.ffprobe, &fixed).unwrap().tags["album"],
+        "B"
+    );
 }
 
 #[test]
@@ -119,7 +176,19 @@ fn converts_24_bit_48khz_flac_to_cd_quality() {
     let input = dir.path().join("Hires.flac");
     run(
         &tools,
-        &["-f", "lavfi", "-i", "sine=duration=1:sample_rate=48000", "-sample_fmt", "s32", "-c:a", "flac", "-bits_per_raw_sample", "24", s(&input)],
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=1:sample_rate=48000",
+            "-sample_fmt",
+            "s32",
+            "-c:a",
+            "flac",
+            "-bits_per_raw_sample",
+            "24",
+            s(&input),
+        ],
     );
     let before = fixer::probe(&tools.ffprobe, &input).unwrap().audio.unwrap();
     assert_eq!((before.rate, before.bits), (48000, Some(24)));
@@ -135,15 +204,19 @@ fn converts_opus_to_mp3_at_44khz() {
     let tools = need_ffmpeg!();
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("Opus Song.opus");
-    run(&tools, &["-f", "lavfi", "-i", "sine=duration=1", "-c:a", "libopus", s(&input)]);
-    let fixed = match fixer::fix(&tools, &input, &dir.path().join("outbox")) {
-        Ok(path) => path,
-        Err(e) if e.contains("libmp3lame") || e.contains("Unknown encoder") => {
-            eprintln!("skipped: ffmpeg has no mp3 encoder");
-            return;
-        }
-        Err(e) => panic!("{e}"),
-    };
+    run(
+        &tools,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=1",
+            "-c:a",
+            "libopus",
+            s(&input),
+        ],
+    );
+    let fixed = fixer::fix(&tools, &input, &dir.path().join("outbox")).unwrap();
     assert_eq!(fixed.extension().unwrap(), "mp3");
     let audio = fixer::probe(&tools.ffprobe, &fixed).unwrap().audio.unwrap();
     assert_eq!((audio.codec.as_str(), audio.rate), ("mp3", 44100));
@@ -156,10 +229,29 @@ fn downmixes_surround_flac() {
     let input = dir.path().join("Surround.flac");
     run(
         &tools,
-        &["-f", "lavfi", "-i", "sine=duration=1:sample_rate=44100", "-af", "pan=5.1|c0=c0|c1=c0|c2=c0|c3=c0|c4=c0|c5=c0", "-sample_fmt", "s16", "-c:a", "flac", s(&input)],
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=1:sample_rate=44100",
+            "-af",
+            "pan=5.1|c0=c0|c1=c0|c2=c0|c3=c0|c4=c0|c5=c0",
+            "-sample_fmt",
+            "s16",
+            "-c:a",
+            "flac",
+            s(&input),
+        ],
     );
     let fixed = fixer::fix(&tools, &input, &dir.path().join("outbox")).unwrap();
-    assert_eq!(fixer::probe(&tools.ffprobe, &fixed).unwrap().audio.unwrap().channels, 2);
+    assert_eq!(
+        fixer::probe(&tools.ffprobe, &fixed)
+            .unwrap()
+            .audio
+            .unwrap()
+            .channels,
+        2
+    );
 }
 
 #[test]
@@ -167,7 +259,18 @@ fn same_title_twice_gets_two_files() {
     let tools = need_ffmpeg!();
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("Song.mp3");
-    run(&tools, &["-f", "lavfi", "-i", "sine=duration=1", "-c:a", "libmp3lame", s(&input)]);
+    run(
+        &tools,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=1",
+            "-c:a",
+            "libmp3lame",
+            s(&input),
+        ],
+    );
     let outbox = dir.path().join("outbox");
     let first = fixer::fix(&tools, &input, &outbox).unwrap();
     let second = fixer::fix(&tools, &input, &outbox).unwrap();

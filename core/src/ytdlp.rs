@@ -98,13 +98,63 @@ pub fn short_reason(stderr: &str) -> String {
         Some((id, rest)) if !id.contains(' ') => rest,
         _ => line,
     };
-    let line = line.split_once(" (caused by").map_or(line, |(head, _)| head);
+    let line = line
+        .split_once(" (caused by")
+        .map_or(line, |(head, _)| head);
     if line.chars().count() <= 160 {
         line.to_string()
     } else {
         let cut: String = line.chars().take(157).collect();
         format!("{cut}...")
     }
+}
+
+/// Plain wording for the errors people meet most. Anything else keeps the
+/// cleaned yt-dlp text.
+pub fn plain_reason(stderr: &str) -> String {
+    let text = short_reason(stderr);
+    let lower = format!("{} {}", text, stderr).to_lowercase();
+    let has = |needle: &str| lower.contains(needle);
+    let http = |code: &str| has(&format!("http error {code}"));
+    let reason = if http("404") {
+        "Page not found (HTTP 404)"
+    } else if http("403") {
+        "Access denied (HTTP 403)"
+    } else if http("429") {
+        "Too many requests, try later (HTTP 429)"
+    } else if (500..600).any(|code| http(&code.to_string())) {
+        "The site has a problem (HTTP 5xx)"
+    } else if has("unsupported url") {
+        "This link is not supported"
+    } else if has("private video") {
+        "Private video"
+    } else if has("sign in to confirm")
+        || has("confirm you're not a bot")
+        || has("confirm you\u{2019}re not a bot")
+    {
+        "The site wants a sign-in"
+    } else if has("members-only") || has("join this channel") {
+        "Members-only video"
+    } else if has("not available in your country") || has("geo restrict") || has("geo-restrict") {
+        "Not available in your country"
+    } else if has("video unavailable")
+        || has("this video is not available")
+        || has("has been removed")
+    {
+        "Video unavailable"
+    } else if has("name resolution")
+        || has("network is unreachable")
+        || has("timed out")
+        || has("connection refused")
+        || has("unable to connect")
+    {
+        "No internet connection"
+    } else if has("unable to download webpage") {
+        "Could not load the page"
+    } else {
+        return text;
+    };
+    reason.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,19 +260,33 @@ pub struct DownloadSpec<'a> {
 pub fn download_args(spec: &DownloadSpec) -> Vec<String> {
     let mut args = base_args(spec.deno);
     let mut add = |items: &[&str]| args.extend(items.iter().map(|s| (*s).to_string()));
-    add(&["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", "0"]);
+    add(&[
+        "-f",
+        "bestaudio/best",
+        "-x",
+        "--audio-format",
+        "mp3",
+        "--audio-quality",
+        "0",
+    ]);
     if spec.sponsorblock {
         add(&["--sponsorblock-remove", "default"]);
     }
     add(&["--embed-metadata", "--no-embed-thumbnail"]);
     add(&["--parse-metadata", "%(artist,uploader|)s:%(meta_artist)s"]);
-    add(&["--parse-metadata", "%(album,playlist_title,uploader|)s:%(meta_album)s"]);
+    add(&[
+        "--parse-metadata",
+        "%(album,playlist_title,uploader|)s:%(meta_album)s",
+    ]);
     if spec.playlist_index.is_some() {
         add(&["--parse-metadata", "%(playlist_index|)s:%(meta_track)s"]);
     }
     add(&["--newline", "--progress"]);
     add(&["--progress-template", "download:SDLP %(progress)j"]);
-    add(&["--progress-template", "postprocess:SDLQ %(progress.postprocessor)s"]);
+    add(&[
+        "--progress-template",
+        "postprocess:SDLQ %(progress.postprocessor)s",
+    ]);
     add(&["--print", "after_move:SDLF %(filepath)s"]);
     add(&["-o", "%(title)s.%(ext)s"]);
     let (dir, ffmpeg) = (
@@ -298,6 +362,61 @@ mod tests {
     }
 
     #[test]
+    fn common_errors_get_plain_text() {
+        let cases = [
+            (
+                "ERROR: [generic] x: Unable to download webpage: HTTP Error 404: Not Found (caused by <HTTPError 404>)",
+                "Page not found (HTTP 404)",
+            ),
+            (
+                "ERROR: [youtube] a: HTTP Error 403: Forbidden",
+                "Access denied (HTTP 403)",
+            ),
+            (
+                "ERROR: HTTP Error 429: Too Many Requests",
+                "Too many requests, try later (HTTP 429)",
+            ),
+            (
+                "ERROR: HTTP Error 503: Service Unavailable",
+                "The site has a problem (HTTP 5xx)",
+            ),
+            (
+                "ERROR: Unsupported URL: https://example.test/x",
+                "This link is not supported",
+            ),
+            (
+                "ERROR: [youtube] a: Private video. Sign in if you've been granted access",
+                "Private video",
+            ),
+            (
+                "ERROR: [youtube] a: Sign in to confirm you're not a bot",
+                "The site wants a sign-in",
+            ),
+            ("ERROR: [youtube] a: Video unavailable", "Video unavailable"),
+            (
+                "ERROR: [youtube] a: The uploader has not made this video available in your country (not available in your country)",
+                "Not available in your country",
+            ),
+            (
+                "ERROR: [generic] x: Unable to download webpage: <urlopen error [Errno -3] Temporary failure in name resolution>",
+                "No internet connection",
+            ),
+            (
+                "ERROR: [generic] x: Unable to download webpage: something odd",
+                "Could not load the page",
+            ),
+        ];
+        for (raw, plain) in cases {
+            assert_eq!(plain_reason(raw), plain, "{raw}");
+        }
+        assert_eq!(
+            plain_reason("ERROR: Something new broke"),
+            "Something new broke"
+        );
+        assert_eq!(plain_reason(""), "yt-dlp failed");
+    }
+
+    #[test]
     fn speed_text() {
         assert_eq!(format_speed(2_100_000.0), "2.1 MB/s");
         assert_eq!(format_speed(512_000.0), "512 kB/s");
@@ -309,7 +428,10 @@ mod tests {
         let stderr = "WARNING: x\nERROR: [youtube] abc: Video unavailable\n";
         assert_eq!(short_reason(stderr), "Video unavailable");
         let not_found = "ERROR: [generic] x: Unable to download webpage: HTTP Error 404: Not Found (caused by <HTTPError 404: Not Found>)";
-        assert_eq!(short_reason(not_found), "Unable to download webpage: HTTP Error 404: Not Found");
+        assert_eq!(
+            short_reason(not_found),
+            "Unable to download webpage: HTTP Error 404: Not Found"
+        );
         assert_eq!(short_reason(""), "yt-dlp failed");
         assert_eq!(short_reason("plain failure"), "plain failure");
         let long = format!("ERROR: {}", "x".repeat(300));
@@ -319,7 +441,12 @@ mod tests {
     #[test]
     fn discovery_of_a_video() {
         let found = parse_discovery(r#"{"id":"a","title":"One song","formats":[]}"#).unwrap();
-        assert_eq!(found, Found::Video { title: "One song".into() });
+        assert_eq!(
+            found,
+            Found::Video {
+                title: "One song".into()
+            }
+        );
     }
 
     #[test]
@@ -336,8 +463,16 @@ mod tests {
         assert_eq!(
             entries,
             vec![
-                Entry { url: "https://example.com/v1".into(), title: "First".into(), index: Some(1) },
-                Entry { url: "https://example.com/v4".into(), title: "https://example.com/v4".into(), index: Some(4) },
+                Entry {
+                    url: "https://example.com/v1".into(),
+                    title: "First".into(),
+                    index: Some(1)
+                },
+                Entry {
+                    url: "https://example.com/v4".into(),
+                    title: "https://example.com/v4".into(),
+                    index: Some(4)
+                },
             ]
         );
     }
@@ -353,7 +488,10 @@ mod tests {
 
     #[test]
     fn empty_playlist_and_garbage_are_errors() {
-        assert_eq!(parse_discovery(r#"{"entries":[]}"#), Err("No media found".into()));
+        assert_eq!(
+            parse_discovery(r#"{"entries":[]}"#),
+            Err("No media found".into())
+        );
         assert!(parse_discovery("oops").is_err());
     }
 
@@ -376,7 +514,10 @@ mod tests {
     fn single_video_arguments() {
         let args = spec(None, true);
         assert_eq!(args[0], "--ignore-config");
-        assert!(has(&args, &["-x", "--audio-format", "mp3", "--audio-quality", "0"]));
+        assert!(has(
+            &args,
+            &["-x", "--audio-format", "mp3", "--audio-quality", "0"]
+        ));
         assert!(has(&args, &["--sponsorblock-remove", "default"]));
         assert!(has(&args, &["--js-runtimes", "deno:/tools/deno"]));
         assert!(has(&args, &["--ffmpeg-location", "/tools"]));

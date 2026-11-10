@@ -82,7 +82,7 @@ pub fn plan(info: &TrackInfo, tag_bytes: u64) -> Result<Plan, String> {
     let mp3_tags = ["-id3v2_version", "3", "-write_id3v1", "0"];
 
     // mp3 plays at 44.1 and 48 kHz, so it is never re-encoded for sample rate.
-    if audio.codec == "mp3" {
+    if audio.codec == "mp3" && downmix.is_empty() {
         args.extend(strings(&["-c:a", "copy"]));
         args.extend(strings(&mp3_tags));
         return Ok(Plan {
@@ -121,8 +121,17 @@ pub fn plan(info: &TrackInfo, tag_bytes: u64) -> Result<Plan, String> {
         });
     }
 
-    issues.push(format!("{} may not play", audio.codec.to_uppercase()));
-    args.extend(strings(&["-c:a", "libmp3lame", "-q:a", "0", "-ar", "44100"]));
+    if audio.codec != "mp3" {
+        issues.push(format!("{} may not play", audio.codec.to_uppercase()));
+    }
+    args.extend(strings(&[
+        "-c:a",
+        "libmp3lame",
+        "-q:a",
+        "0",
+        "-ar",
+        "44100",
+    ]));
     args.extend(strings(downmix));
     args.extend(strings(&mp3_tags));
     Ok(Plan {
@@ -137,6 +146,13 @@ pub fn verify(info: &TrackInfo, tag_bytes: u64, ext: &str) -> Option<String> {
     let Some(audio) = &info.audio else {
         return Some("Output has no audio".to_string());
     };
+    if audio.codec != ext || audio.channels > 2 {
+        return Some(format!(
+            "Output is {} with {} channels",
+            describe(audio),
+            audio.channels
+        ));
+    }
     if info.has_art {
         return Some("Cover art is still embedded".to_string());
     }
@@ -185,7 +201,11 @@ pub fn numbered_name(stem: &str, ext: &str, number: u32) -> String {
 
 pub fn describe(audio: &Audio) -> String {
     let bits = audio.bits.map_or(String::new(), |b| format!("{b}-bit / "));
-    format!("{} {bits}{} kHz", audio.codec.to_uppercase(), khz(audio.rate))
+    format!(
+        "{} {bits}{} kHz",
+        audio.codec.to_uppercase(),
+        khz(audio.rate)
+    )
 }
 
 pub fn format_bytes(n: u64) -> String {
@@ -308,7 +328,10 @@ mod tests {
 
     #[test]
     fn verify_accepts_clean_output() {
-        assert_eq!(verify(&info("mp3", 48000, None, 2, false), 4000, "mp3"), None);
+        assert_eq!(
+            verify(&info("mp3", 48000, None, 2, false), 4000, "mp3"),
+            None
+        );
         assert_eq!(
             verify(&info("flac", 44100, Some(16), 2, false), 0, "flac"),
             None
@@ -317,18 +340,34 @@ mod tests {
 
     #[test]
     fn verify_rejects_bad_output() {
+        assert!(verify(&info("flac", 44100, Some(16), 2, false), 0, "mp3").is_some());
+        assert!(verify(&info("mp3", 44100, None, 6, false), 0, "mp3").is_some());
         let ok = info("mp3", 44100, None, 2, false);
-        assert!(verify(&TrackInfo::default(), 0, "mp3").unwrap().contains("no audio"));
-        assert!(verify(&info("mp3", 44100, None, 2, true), 0, "mp3").unwrap().contains("art"));
+        assert!(
+            verify(&TrackInfo::default(), 0, "mp3")
+                .unwrap()
+                .contains("no audio")
+        );
+        assert!(
+            verify(&info("mp3", 44100, None, 2, true), 0, "mp3")
+                .unwrap()
+                .contains("art")
+        );
         assert!(verify(&ok, ID3_LIMIT + 1, "mp3").unwrap().contains("ID3"));
         assert_eq!(verify(&ok, ID3_LIMIT, "mp3"), None);
         let flac = info("flac", 48000, Some(24), 2, false);
-        assert_eq!(verify(&flac, 0, "flac").unwrap(), "Output is FLAC 24-bit / 48 kHz");
+        assert_eq!(
+            verify(&flac, 0, "flac").unwrap(),
+            "Output is FLAC 24-bit / 48 kHz"
+        );
     }
 
     #[test]
     fn safe_stem_replaces_vfat_characters() {
-        assert_eq!(safe_stem("a/b\\c:d*e?f\"g<h>i|j", "mp3"), "a_b_c_d_e_f_g_h_i_j");
+        assert_eq!(
+            safe_stem("a/b\\c:d*e?f\"g<h>i|j", "mp3"),
+            "a_b_c_d_e_f_g_h_i_j"
+        );
         assert_eq!(safe_stem("tab\there\nnew", "mp3"), "tab_here_new");
     }
 
@@ -341,7 +380,12 @@ mod tests {
 
     #[test]
     fn safe_stem_keeps_full_name_under_255_bytes() {
-        for text in ["a".repeat(400), "é".repeat(400), "曲".repeat(400), "🎵".repeat(400)] {
+        for text in [
+            "a".repeat(400),
+            "é".repeat(400),
+            "曲".repeat(400),
+            "🎵".repeat(400),
+        ] {
             let stem = safe_stem(&text, "mp3");
             let longest = numbered_name(&stem, "mp3", 99);
             assert!(longest.len() <= MAX_NAME_BYTES, "{} bytes", longest.len());

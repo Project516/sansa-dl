@@ -2,6 +2,7 @@
 
 use crate::{net, tools};
 use std::fs;
+use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
@@ -18,8 +19,21 @@ pub fn asset_name(version: &str) -> String {
 
 /// Replaces `appimage` with a newer verified release. Returns the new version,
 /// or None when this one is current.
-pub fn update(agent: &ureq::Agent, appimage: &Path, current: &str) -> Result<Option<String>, String> {
-    let release = net::get_json(agent, RELEASE)?;
+pub fn update(
+    agent: &ureq::Agent,
+    appimage: &Path,
+    current: &str,
+) -> Result<Option<String>, String> {
+    update_from(agent, RELEASE, appimage, current)
+}
+
+pub fn update_from(
+    agent: &ureq::Agent,
+    release_url: &str,
+    appimage: &Path,
+    current: &str,
+) -> Result<Option<String>, String> {
+    let release = net::get_json(agent, release_url)?;
     let version = release
         .get("tag_name")
         .and_then(|t| t.as_str())
@@ -37,16 +51,24 @@ pub fn update(agent: &ureq::Agent, appimage: &Path, current: &str) -> Result<Opt
         .ok_or("release has no checksum")?;
 
     // Same folder as the target, so the final rename is atomic.
-    let temp = appimage.with_file_name(format!(".sansa-dl-update-{}.part", std::process::id()));
+    let mut random = [0u8; 16];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut random))
+        .map_err(|e| e.to_string())?;
+    let temp = appimage.with_file_name(format!(".sansa-dl-update-{}.part", net::hex(&random)));
+    let mut created = false;
     let result = (|| {
         let got = net::download(agent, &url, &temp)?;
+        created = true;
         if got != expected {
             return Err("update checksum mismatch".to_string());
         }
         fs::set_permissions(&temp, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
         fs::rename(&temp, appimage).map_err(|e| e.to_string())
     })();
-    let _ = fs::remove_file(&temp);
+    if created {
+        let _ = fs::remove_file(&temp);
+    }
     result.map(|()| Some(version))
 }
 

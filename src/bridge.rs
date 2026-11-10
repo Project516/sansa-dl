@@ -64,7 +64,12 @@ pub mod qobject {
         /// Every call must be followed by `end_insert_rows`.
         #[inherit]
         #[cxx_name = "beginInsertRows"]
-        unsafe fn begin_insert_rows(self: Pin<&mut Backend>, parent: &QModelIndex, first: i32, last: i32);
+        unsafe fn begin_insert_rows(
+            self: Pin<&mut Backend>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
 
         /// # Safety
         /// Must follow `begin_insert_rows`.
@@ -119,7 +124,9 @@ pub mod qobject {
 use crate::{INITIAL_LINKS, INSTANCE};
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
-use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant, QVector};
+use cxx_qt_lib::{
+    QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant, QVector,
+};
 use sansa_dl_core::engine::{self, Emit, Engine, JobView, UiEvent};
 use sansa_dl_core::instance::{Command, Instance};
 use sansa_dl_core::paths::Dirs;
@@ -127,7 +134,15 @@ use sansa_dl_core::queue::parse_links;
 use std::sync::Arc;
 
 const ROLE_BASE: i32 = 0x100;
-const ROLES: [&str; 7] = ["jobId", "title", "status", "stage", "progress", "canCancel", "canRetry"];
+const ROLES: [&str; 7] = [
+    "jobId",
+    "title",
+    "status",
+    "stage",
+    "progress",
+    "canCancel",
+    "canRetry",
+];
 
 #[derive(Default)]
 pub struct BackendRust {
@@ -201,22 +216,34 @@ impl qobject::Backend {
     }
 
     fn set_rows(mut self: Pin<&mut Self>, rows: Vec<JobView>) {
-        let has_finished = rows.iter().any(|r| matches!(r.stage, "done" | "failed" | "canceled"));
+        let has_finished = rows
+            .iter()
+            .any(|r| matches!(r.stage, "done" | "failed" | "canceled"));
         let old_len = self.rust().rows.len();
         let appended = rows.len() >= old_len
-            && self.rust().rows.iter().zip(&rows).all(|(a, b)| a.id == b.id);
+            && self
+                .rust()
+                .rows
+                .iter()
+                .zip(&rows)
+                .all(|(a, b)| a.id == b.id);
         let none = QModelIndex::default();
         if appended {
-            let changed: Vec<usize> = (0..old_len).filter(|i| self.rust().rows[*i] != rows[*i]).collect();
+            let mut rows = rows;
+            let tail = rows.split_off(old_len);
+            let changed: Vec<usize> = (0..old_len)
+                .filter(|i| self.rust().rows[*i] != rows[*i])
+                .collect();
             self.as_mut().rust_mut().rows = rows;
             for i in changed {
                 self.as_mut().row_changed(i);
             }
-            let new_len = self.rust().rows.len();
-            if new_len > old_len {
-                // The rows are already stored, so the view sees them once the insert closes.
+            if !tail.is_empty() {
+                let last = (old_len + tail.len() - 1) as i32;
+                // SAFETY: every begin is closed by the matching end below.
                 unsafe {
-                    self.as_mut().begin_insert_rows(&none, old_len as i32, new_len as i32 - 1);
+                    self.as_mut().begin_insert_rows(&none, old_len as i32, last);
+                    self.as_mut().rust_mut().rows.extend(tail);
                     self.as_mut().end_insert_rows();
                 }
             }
@@ -242,7 +269,8 @@ impl qobject::Backend {
 
     fn row_changed(mut self: Pin<&mut Self>, i: usize) {
         let index = self.index(i as i32, 0, &QModelIndex::default());
-        self.as_mut().data_changed(&index, &index, &QVector::default());
+        self.as_mut()
+            .data_changed(&index, &index, &QVector::default());
     }
 
     fn row_count(&self, _parent: &QModelIndex) -> i32 {
@@ -250,7 +278,10 @@ impl qobject::Backend {
     }
 
     fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
-        let Some(row) = usize::try_from(index.row()).ok().and_then(|i| self.rust().rows.get(i)) else {
+        let Some(row) = usize::try_from(index.row())
+            .ok()
+            .and_then(|i| self.rust().rows.get(i))
+        else {
             return QVariant::default();
         };
         match role - ROLE_BASE {

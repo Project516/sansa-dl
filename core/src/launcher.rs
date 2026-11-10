@@ -17,6 +17,7 @@ fn quote(path: &str) -> String {
                 out.push('\\');
                 out.push(c);
             }
+            '%' => out.push_str("%%"),
             // Exec escapes a backslash once, and the entry file escapes it again.
             '\\' => out.push_str("\\\\\\\\"),
             _ => out.push(c),
@@ -58,8 +59,15 @@ fn write_if_changed(path: &Path, content: &str) -> io::Result<bool> {
 
 /// Writes the launcher entry and icon under `data_home` when they differ.
 pub fn install(appimage: &Path, data_home: &Path) -> io::Result<()> {
+    if appimage.to_string_lossy().chars().any(char::is_control) {
+        eprintln!("sansa-dl: launcher path contains a control character");
+        return Ok(());
+    }
     let apps = data_home.join("applications");
-    let entry = write_if_changed(&apps.join(format!("{APP_ID}.desktop")), &desktop_entry(appimage))?;
+    let entry = write_if_changed(
+        &apps.join(format!("{APP_ID}.desktop")),
+        &desktop_entry(appimage),
+    )?;
     let icon = write_if_changed(
         &data_home
             .join("icons/hicolor/scalable/apps")
@@ -104,7 +112,15 @@ mod tests {
     fn exec_quoting_escapes_special_characters() {
         assert_eq!(quote("/a b/c"), "\"/a b/c\"");
         assert_eq!(quote("/a\"b$c`d"), "\"/a\\\"b\\$c\\`d\"");
+        assert_eq!(quote("/a%b"), "\"/a%%b\"");
         assert_eq!(quote("/a\\b"), "\"/a\\\\\\\\b\"");
+    }
+
+    #[test]
+    fn install_skips_control_characters() {
+        let dir = tempfile::tempdir().unwrap();
+        install(Path::new("/bad\npath"), dir.path()).unwrap();
+        assert!(!dir.path().join("applications").exists());
     }
 
     #[test]
@@ -112,14 +128,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let app = Path::new("/opt/sansa-dl.AppImage");
         install(app, dir.path()).unwrap();
-        let entry = dir.path().join("applications/dev.project516.sansa-dl.desktop");
-        let icon = dir.path().join("icons/hicolor/scalable/apps/dev.project516.sansa-dl.svg");
+        let entry = dir
+            .path()
+            .join("applications/dev.project516.sansa-dl.desktop");
+        let icon = dir
+            .path()
+            .join("icons/hicolor/scalable/apps/dev.project516.sansa-dl.svg");
         assert!(entry.exists() && icon.exists());
         let first = fs::metadata(&entry).unwrap().modified().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
         install(app, dir.path()).unwrap();
         assert_eq!(fs::metadata(&entry).unwrap().modified().unwrap(), first);
         install(Path::new("/elsewhere.AppImage"), dir.path()).unwrap();
-        assert!(fs::read_to_string(&entry).unwrap().contains("/elsewhere.AppImage"));
+        assert!(
+            fs::read_to_string(&entry)
+                .unwrap()
+                .contains("/elsewhere.AppImage")
+        );
     }
 }

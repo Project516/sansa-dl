@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "UTC",
+  "schedule": ["before 6am on monday"],
+  "packageRules": [
+    {
+      "description": "Group minor and patch updates per ecosystem and merge them when CI passes",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "cargo dependencies",
+      "automerge": true
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "github actions",
+      "automerge": true
+    },
+    {
+      "description": "Digest bumps of the CI container image",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["digest", "minor", "patch"],
+      "groupName": "ci container",
+      "automerge": true
+    },
+    {
+      "description": "The AppImage links the host Qt, so CI must not run a newer Fedora than the supported desktop",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["registry.fedoraproject.org/fedora"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ]
+}

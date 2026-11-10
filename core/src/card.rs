@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use zbus::MatchRule;
 use zbus::blocking::{Connection, MessageIterator, Proxy};
 use zbus::message::Type as MessageType;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
-use zbus::MatchRule;
 
 const DEST: &str = "org.freedesktop.UDisks2";
 const ROOT: &str = "/org/freedesktop/UDisks2";
@@ -149,7 +149,10 @@ impl Udisks {
 
     /// Calls `on_change` with the card now and again whenever it appears,
     /// goes away, or is mounted or unmounted.
-    pub fn watch(self, mut on_change: impl FnMut(Result<Option<CardInfo>, String>) + Send + 'static) {
+    pub fn watch(
+        self,
+        mut on_change: impl FnMut(Result<Option<CardInfo>, String>) + Send + 'static,
+    ) {
         std::thread::spawn(move || {
             let rule = MatchRule::builder()
                 .msg_type(MessageType::Signal)
@@ -186,7 +189,7 @@ fn relevant(message: &zbus::Message) -> bool {
         Some("PropertiesChanged") => message
             .body()
             .deserialize::<(String, Properties, Vec<String>)>()
-            .is_ok_and(|(interface, _, _)| interface == FILESYSTEM),
+            .is_ok_and(|(interface, _, _)| interface == FILESYSTEM || interface == BLOCK),
         _ => false,
     }
 }
@@ -199,7 +202,12 @@ mod tests {
         OwnedValue::try_from(v.into()).unwrap()
     }
 
-    fn object(label: &str, fs_type: &str, mount: Option<&str>, drive: &str) -> HashMap<String, Properties> {
+    fn object(
+        label: &str,
+        fs_type: &str,
+        mount: Option<&str>,
+        drive: &str,
+    ) -> HashMap<String, Properties> {
         let mut block = Properties::new();
         block.insert("IdLabel".into(), value(label));
         block.insert("IdType".into(), value(fs_type));
@@ -209,9 +217,14 @@ mod tests {
             value(zbus::zvariant::ObjectPath::try_from(drive).unwrap()),
         );
         let mut filesystem = Properties::new();
-        let points: Vec<Vec<u8>> = mount.map(|m| vec![[m.as_bytes(), b"\0"].concat()]).unwrap_or_default();
+        let points: Vec<Vec<u8>> = mount
+            .map(|m| vec![[m.as_bytes(), b"\0"].concat()])
+            .unwrap_or_default();
         filesystem.insert("MountPoints".into(), value(points));
-        HashMap::from([(BLOCK.to_string(), block), (FILESYSTEM.to_string(), filesystem)])
+        HashMap::from([
+            (BLOCK.to_string(), block),
+            (FILESYSTEM.to_string(), filesystem),
+        ])
     }
 
     fn objects(items: Vec<(&str, HashMap<String, Properties>)>) -> Objects {
@@ -224,16 +237,27 @@ mod tests {
     #[test]
     fn finds_a_mounted_card() {
         let all = objects(vec![
-            ("/org/freedesktop/UDisks2/block_devices/sda1", object("OTHER", "vfat", None, "/")),
+            (
+                "/org/freedesktop/UDisks2/block_devices/sda1",
+                object("OTHER", "vfat", None, "/"),
+            ),
             (
                 "/org/freedesktop/UDisks2/block_devices/sdb1",
-                object("SANSA", "vfat", Some("/run/media/<user>/SANSA"), "/org/freedesktop/UDisks2/drives/D"),
+                object(
+                    "SANSA",
+                    "vfat",
+                    Some("/run/media/<user>/SANSA"),
+                    "/org/freedesktop/UDisks2/drives/D",
+                ),
             ),
         ]);
         let card = find_card(&all).unwrap();
         assert_eq!(card.device, "/dev/sdb1");
         assert_eq!(card.mount, Some(PathBuf::from("/run/media/<user>/SANSA")));
-        assert_eq!(card.drive.as_deref(), Some("/org/freedesktop/UDisks2/drives/D"));
+        assert_eq!(
+            card.drive.as_deref(),
+            Some("/org/freedesktop/UDisks2/drives/D")
+        );
         assert!(card.block.ends_with("sdb1"));
     }
 

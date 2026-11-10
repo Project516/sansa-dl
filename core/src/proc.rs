@@ -98,7 +98,10 @@ mod tests {
     fn collects_lines_and_stderr() {
         let (program, args) = sh("echo one; echo two; echo oops >&2; exit 3");
         let mut lines = Vec::new();
-        let out = run(&program, &args, &Cancel::default(), |l| lines.push(l.trim().to_string())).unwrap();
+        let out = run(&program, &args, &Cancel::default(), |l| {
+            lines.push(l.trim().to_string())
+        })
+        .unwrap();
         assert_eq!(lines, ["one", "two"]);
         assert!(!out.success);
         assert_eq!(out.stderr.trim(), "oops");
@@ -112,7 +115,10 @@ mod tests {
             let cancel = cancel.clone();
             std::thread::spawn(move || {
                 let mut lines = Vec::new();
-                let out = run(&program, &args, &cancel, |l| lines.push(l.trim().to_string())).unwrap();
+                let out = run(&program, &args, &cancel, |l| {
+                    lines.push(l.trim().to_string())
+                })
+                .unwrap();
                 (lines, out.success)
             })
         };
@@ -127,7 +133,13 @@ mod tests {
 
     #[test]
     fn missing_program_is_an_error() {
-        let err = run(Path::new("/nonexistent/tool"), &[], &Cancel::default(), |_| {}).err();
+        let err = run(
+            Path::new("/nonexistent/tool"),
+            &[],
+            &Cancel::default(),
+            |_| {},
+        )
+        .err();
         assert!(err.is_some());
     }
 }

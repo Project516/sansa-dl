@@ -11,9 +11,9 @@ use crate::{fixer, net, notify, selfupdate, transfer};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const MAX_FINDING: usize = 2;
@@ -72,16 +72,37 @@ enum Msg {
     ClearFinished,
     Eject,
     SetSponsorBlock(bool),
-    Discovered { id: u64, result: Result<Found, String> },
-    Progress { id: u64, fraction: Option<f64>, speed: Option<f64>, processing: bool },
-    Downloaded { id: u64, result: Result<PathBuf, String> },
-    Fixed { id: u64, result: Result<PathBuf, String> },
+    Discovered {
+        id: u64,
+        generation: u64,
+        result: Result<Found, String>,
+    },
+    Progress {
+        id: u64,
+        generation: u64,
+        fraction: Option<f64>,
+        speed: Option<f64>,
+        processing: bool,
+    },
+    Downloaded {
+        id: u64,
+        generation: u64,
+        result: Result<PathBuf, String>,
+    },
+    Fixed {
+        id: u64,
+        generation: u64,
+        result: Result<PathBuf, String>,
+    },
     Card(Result<Option<CardInfo>, String>),
     Mounted(Result<PathBuf, String>),
     Free(Option<u64>),
     CopyStarted(u64),
     Copied(Option<u64>),
-    CopyFailed { id: Option<u64>, reason: String },
+    CopyFailed {
+        id: Option<u64>,
+        reason: String,
+    },
     TransferDone,
     Ejected(Result<(), String>),
     ToolStaged(Staged),
@@ -158,14 +179,31 @@ struct Core {
     last_tools: String,
 }
 
+/// What the coordinator listens to besides the UI.
+#[derive(Debug, Clone)]
+pub struct Options {
+    pub card: bool,
+    pub updates: bool,
+    pub bundled_tools: Option<PathBuf>,
+}
+
 /// Starts the coordinator and everything it listens to.
 pub fn start(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit) -> Engine {
+    let options = Options {
+        card: true,
+        updates: true,
+        bundled_tools: tools::bundled_dir(),
+    };
+    start_with(dirs, appimage, emit, options)
+}
+
+pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Options) -> Engine {
     let (tx, rx) = channel();
     let engine = Engine { tx: tx.clone() };
     let _ = dirs.create();
     tools::clean_stages(&dirs.tools);
 
-    let bundled = tools::bundled_dir();
+    let bundled = options.bundled_tools.clone();
     let mut jobs = queue::restore(read_json::<Vec<Job>>(&dirs.jobs_file));
     let next_id = jobs.iter().map(|j| j.id).max().unwrap_or(0) + 1;
     for job in &mut jobs {
@@ -173,7 +211,7 @@ pub fn start(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit) -> Engine {
     }
     remove_stale_downloads(&dirs.downloads, &jobs);
 
-    let udisks = Udisks::connect().ok();
+    let udisks = options.card.then(|| Udisks::connect().ok()).flatten();
     let resolved = Resolved::load(&dirs.tools, bundled.as_deref());
     let core = Core {
         cfg: read_json(&dirs.config_file),
@@ -209,10 +247,12 @@ pub fn start(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit) -> Engine {
         udisks.watch(move |card| {
             let _ = tx.send(Msg::Card(card));
         });
-    } else {
+    } else if options.card {
         let _ = tx.send(Msg::Card(Err("UDisks2 is not available".into())));
     }
-    spawn_updater(tx, dirs, resolved, appimage);
+    if options.updates {
+        spawn_updater(tx, dirs, resolved, appimage);
+    }
 
     std::thread::Builder::new()
         .name("coordinator".into())
@@ -226,13 +266,25 @@ fn remove_stale_downloads(downloads: &Path, jobs: &[Job]) {
         return;
     };
     for entry in entries.flatten() {
-        let keep = entry
-            .file_name()
-            .to_str()
-            .and_then(|n| n.parse::<u64>().ok())
-            .is_some_and(|id| jobs.iter().any(|j| j.id == id && j.downloaded.is_some()));
+        let keep = jobs.iter().any(|j| {
+            j.downloaded.as_ref().and_then(|p| p.parent()) == Some(entry.path().as_path())
+        });
         if !keep {
             let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+fn current_attempt(job: &Job, id: u64, generation: u64, stage: Stage) -> bool {
+    job.id == id && job.generation == generation && job.stage == stage
+}
+
+fn clean_card_temps(tracks: &Path) {
+    if let Ok(entries) = fs::read_dir(tracks) {
+        for entry in entries.flatten() {
+            if fixer::is_temp(&entry.path()) && entry.file_type().is_ok_and(|t| t.is_file()) {
+                let _ = fs::remove_file(entry.path());
+            }
         }
     }
 }
@@ -263,7 +315,10 @@ fn outbox_files(outbox: &Path) -> Vec<PathBuf> {
         .flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_file()) && !fixer::is_temp(&e.path()))
         .map(|e| {
-            let modified = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+            let modified = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
             (modified, e.path())
         })
         .collect();
@@ -336,15 +391,27 @@ impl Core {
     }
 
     fn card_view(&self) -> CardView {
-        let view = |kind, text: String, can_eject| CardView { kind, text, can_eject };
+        let view = |kind, text: String, can_eject| CardView {
+            kind,
+            text,
+            can_eject,
+        };
         if self.ejecting {
             return view("busy", "Ejecting the Sansa".into(), false);
         }
         if let Some(note) = &self.note {
             match note {
                 CardNote::Safe => return view("safe", "Safe to unplug the Sansa".into(), false),
-                CardNote::EjectError(e) => return view("error", format!("Could not eject: {e}"), self.card.is_some()),
-                CardNote::MountError(e) => return view("error", format!("Could not mount the Sansa: {e}"), false),
+                CardNote::EjectError(e) => {
+                    return view(
+                        "error",
+                        format!("Could not eject: {e}"),
+                        self.card.is_some(),
+                    );
+                }
+                CardNote::MountError(e) => {
+                    return view("error", format!("Could not mount the Sansa: {e}"), false);
+                }
             }
         }
         let waiting = self.last_waiting.unwrap_or(0);
@@ -352,7 +419,9 @@ impl Core {
             Some(card) if self.ejected_block.as_ref() == Some(&card.block) => {
                 view("safe", "Safe to unplug the Sansa".into(), false)
             }
-            Some(_) if self.transferring => view("copying", "Copying songs to the Sansa".into(), true),
+            Some(_) if self.transferring => {
+                view("copying", "Copying songs to the Sansa".into(), true)
+            }
             Some(_) => {
                 let text = match self.free {
                     Some(free) => format!("Sansa connected, {} free", format_free(free)),
@@ -388,6 +457,7 @@ impl Core {
             Msg::Cancel(id) => self.cancel(id),
             Msg::Retry(id) => {
                 if let Some(job) = self.job_mut(id).filter(|j| j.can_retry()) {
+                    job.generation += 1;
                     job.stage = job.retry_stage();
                     job.reason.clear();
                     job.fraction = None;
@@ -399,7 +469,7 @@ impl Core {
                 }
             }
             Msg::ClearFinished => {
-                self.jobs.retain(|j| !j.is_finished());
+                self.jobs.retain(|j| !j.is_finished() || j.running);
                 self.show_all();
             }
             Msg::SetSponsorBlock(on) => {
@@ -407,17 +477,81 @@ impl Core {
                 let _ = write_json(&self.dirs.config_file, &self.cfg);
                 (self.emit)(UiEvent::SponsorBlock(on));
             }
-            Msg::Discovered { id, result } => self.discovered(id, result),
-            Msg::Progress { id, fraction, speed, processing } => {
-                if let Some(job) = self.job_mut(id).filter(|j| j.stage == Stage::Downloading) {
+            Msg::Discovered {
+                id,
+                generation,
+                result,
+            } => {
+                if self
+                    .jobs
+                    .iter()
+                    .any(|j| j.id == id && j.generation == generation)
+                {
+                    self.discovered(id, result);
+                }
+            }
+            Msg::Progress {
+                id,
+                generation,
+                fraction,
+                speed,
+                processing,
+            } => {
+                if let Some(job) = self
+                    .job_mut(id)
+                    .filter(|j| j.stage == Stage::Downloading && j.generation == generation)
+                {
                     job.fraction = fraction.or(job.fraction);
                     job.speed = speed;
                     job.processing = processing;
                     self.show(id);
                 }
             }
-            Msg::Downloaded { id, result } => self.downloaded(id, result),
-            Msg::Fixed { id, result } => self.fixed(id, result),
+            Msg::Downloaded {
+                id,
+                generation,
+                result,
+            } => {
+                if self
+                    .jobs
+                    .iter()
+                    .any(|j| current_attempt(j, id, generation, Stage::Downloading))
+                {
+                    self.downloaded(id, result);
+                } else if let Ok(file) = result
+                    && let Some(dir) = file.parent()
+                {
+                    let _ = fs::remove_dir_all(dir);
+                }
+            }
+            Msg::Fixed {
+                id,
+                generation,
+                result,
+            } => {
+                if self
+                    .jobs
+                    .iter()
+                    .any(|j| current_attempt(j, id, generation, Stage::Fixing))
+                {
+                    self.fixed(id, result);
+                } else {
+                    if let Ok(file) = result {
+                        let _ = fs::remove_file(file);
+                    }
+                    if let Some(job) = self.jobs.iter_mut().find(|j| {
+                        j.id == id && j.generation == generation && j.stage == Stage::Canceled
+                    }) {
+                        job.running = false;
+                        if let Some(file) = job.downloaded.take()
+                            && let Some(dir) = file.parent()
+                        {
+                            let _ = fs::remove_dir_all(dir);
+                        }
+                    }
+                    self.show_all();
+                }
+            }
             Msg::Card(result) => self.on_card(result),
             Msg::Mounted(result) => {
                 self.mounting = false;
@@ -480,22 +614,33 @@ impl Core {
     }
 
     fn cancel(&mut self, id: u64) {
-        let Some(job) = self.jobs.iter_mut().find(|j| j.id == id).filter(|j| j.can_cancel()) else {
+        let Some(job) = self
+            .jobs
+            .iter_mut()
+            .find(|j| j.id == id)
+            .filter(|j| j.can_cancel())
+        else {
             return;
         };
+        let fixing = job.stage == Stage::Fixing && job.running;
         job.stage = Stage::Canceled;
-        job.running = false;
-        job.downloaded = None;
+        job.running = fixing;
+        if !fixing {
+            job.downloaded = None;
+        }
         if let Some(cancel) = self.cancels.remove(&id) {
             cancel.cancel();
         }
-        let _ = fs::remove_dir_all(self.dirs.downloads.join(id.to_string()));
         self.show_all();
     }
 
     fn discovered(&mut self, id: u64, result: Result<Found, String>) {
         self.cancels.remove(&id);
-        let Some(pos) = self.jobs.iter().position(|j| j.id == id && j.stage == Stage::Finding) else {
+        let Some(pos) = self
+            .jobs
+            .iter()
+            .position(|j| j.id == id && j.stage == Stage::Finding)
+        else {
             return;
         };
         self.jobs[pos].running = false;
@@ -563,8 +708,11 @@ impl Core {
             Ok(outbox_file) => {
                 job.stage = Stage::WaitingCard;
                 job.outbox_file = Some(outbox_file);
-                job.downloaded = None;
-                let _ = fs::remove_dir_all(self.dirs.downloads.join(id.to_string()));
+                if let Some(file) = job.downloaded.take()
+                    && let Some(dir) = file.parent()
+                {
+                    let _ = fs::remove_dir_all(dir);
+                }
                 self.note = None;
                 self.transfer_failed = false;
             }
@@ -598,8 +746,8 @@ impl Core {
             }
             Ok(Some(info)) => {
                 let appeared = self.card.as_ref().is_none_or(|c| c.block != info.block);
-                let newly_mounted =
-                    info.mount.is_some() && (appeared || self.card.as_ref().is_some_and(|c| c.mount.is_none()));
+                let newly_mounted = info.mount.is_some()
+                    && (appeared || self.card.as_ref().is_some_and(|c| c.mount.is_none()));
                 if appeared {
                     self.note = None;
                     self.free = None;
@@ -629,6 +777,9 @@ impl Core {
     fn read_free_space(&self, mount: PathBuf) {
         let tx = self.tx.clone();
         spawn("free-space", move || {
+            if transfer::mount_device(&mount).is_ok() {
+                clean_card_temps(&mount.join("Tracks"));
+            }
             let _ = tx.send(Msg::Free(transfer::free_space(&mount)));
         });
     }
@@ -710,7 +861,11 @@ impl Core {
         let work: Vec<(Option<u64>, PathBuf)> = files
             .into_iter()
             .map(|file| {
-                let id = self.jobs.iter().find(|j| j.outbox_file.as_ref() == Some(&file)).map(|j| j.id);
+                let id = self
+                    .jobs
+                    .iter()
+                    .find(|j| j.outbox_file.as_ref() == Some(&file))
+                    .map(|j| j.id);
                 (id, file)
             })
             .collect();
@@ -719,6 +874,7 @@ impl Core {
         let stop = self.stop_transfer.clone();
         let tracks = mount.join("Tracks");
         spawn("transfer", move || {
+            let device = transfer::mount_device(tracks.parent().unwrap());
             for (id, file) in work {
                 if stop.load(Ordering::SeqCst) {
                     break;
@@ -726,12 +882,19 @@ impl Core {
                 if let Some(id) = id {
                     let _ = tx.send(Msg::CopyStarted(id));
                 }
-                match transfer::copy_to_card(&file, &tracks) {
+                match device
+                    .as_ref()
+                    .map_err(|e| std::io::Error::other(e.to_string()))
+                    .and_then(|device| transfer::copy_to_card_device(&file, &tracks, *device))
+                {
                     Ok(_) => {
                         let _ = tx.send(Msg::Copied(id));
                     }
                     Err(e) => {
-                        let _ = tx.send(Msg::CopyFailed { id, reason: e.to_string() });
+                        let _ = tx.send(Msg::CopyFailed {
+                            id,
+                            reason: e.to_string(),
+                        });
                         break;
                     }
                 }
@@ -792,23 +955,41 @@ impl Core {
         else {
             return;
         };
-        let mut finding = self.jobs.iter().filter(|j| j.running && j.stage == Stage::Finding).count();
-        let mut downloading = self.jobs.iter().filter(|j| j.running && j.stage == Stage::Downloading).count();
+        let mut finding = self
+            .jobs
+            .iter()
+            .filter(|j| j.running && j.stage == Stage::Finding)
+            .count();
+        let mut downloading = self
+            .jobs
+            .iter()
+            .filter(|j| j.running && j.stage == Stage::Downloading)
+            .count();
         let mut changed = false;
         for i in 0..self.jobs.len() {
             if self.jobs[i].running {
                 continue;
             }
-            let (id, stage) = (self.jobs[i].id, self.jobs[i].stage);
+            let (id, stage, generation) =
+                (self.jobs[i].id, self.jobs[i].stage, self.jobs[i].generation);
             let cancel = Arc::new(Cancel::default());
             let tx = self.tx.clone();
             match stage {
                 Stage::Finding if finding < MAX_FINDING => {
                     finding += 1;
-                    let (url, ytdlp, deno, cancel) = (self.jobs[i].url.clone(), ytdlp.clone(), deno.clone(), cancel.clone());
+                    let (url, ytdlp, deno, cancel) = (
+                        self.jobs[i].url.clone(),
+                        ytdlp.clone(),
+                        deno.clone(),
+                        cancel.clone(),
+                    );
                     spawn("find", move || {
                         let result = discover(&ytdlp, &deno, &url, &cancel);
-                        let _ = tx.send(Msg::Discovered { id, result });
+                        let _ = tx.send(Msg::Discovered {
+                            id,
+                            generation,
+                            result,
+                        });
                     });
                 }
                 Stage::Waiting if downloading < MAX_DOWNLOADS => {
@@ -820,16 +1001,25 @@ impl Core {
                         id,
                         url: self.jobs[i].url.clone(),
                         playlist_index: self.jobs[i].playlist_index,
-                        dir: self.dirs.downloads.join(id.to_string()),
+                        dir: self.dirs.downloads.join(format!("{id}-{generation}")),
+                        generation,
                         ytdlp: ytdlp.clone(),
                         deno: deno.clone(),
-                        ffmpeg_dir: ffmpeg.ffmpeg.parent().map(Path::to_path_buf).unwrap_or_default(),
+                        ffmpeg_dir: ffmpeg
+                            .ffmpeg
+                            .parent()
+                            .map(Path::to_path_buf)
+                            .unwrap_or_default(),
                         sponsorblock: self.cfg.sponsorblock,
                     };
                     let cancel = cancel.clone();
                     spawn("download", move || {
                         let result = download(&spec, &cancel, &tx);
-                        let _ = tx.send(Msg::Downloaded { id, result });
+                        let _ = tx.send(Msg::Downloaded {
+                            id,
+                            generation,
+                            result,
+                        });
                     });
                 }
                 Stage::Fixing => {
@@ -841,7 +1031,11 @@ impl Core {
                     let (ffmpeg, outbox) = (ffmpeg.clone(), self.dirs.outbox.clone());
                     spawn("fix", move || {
                         let result = fixer::fix(&ffmpeg, &file, &outbox);
-                        let _ = tx.send(Msg::Fixed { id, result });
+                        let _ = tx.send(Msg::Fixed {
+                            id,
+                            generation,
+                            result,
+                        });
                     });
                 }
                 _ => continue,
@@ -867,12 +1061,19 @@ fn discover(ytdlp: &Path, deno: &Path, url: &str, cancel: &Cancel) -> Result<Fou
         return Err("Canceled".into());
     }
     if !out.success {
-        return Err(ytdlp::short_reason(&out.stderr));
+        return Err(failure(url, &out.stderr));
     }
     ytdlp::parse_discovery(&json)
 }
 
+/// The row gets plain text; the full yt-dlp message goes to the log.
+fn failure(url: &str, stderr: &str) -> String {
+    eprintln!("sansa-dl: yt-dlp failed for {url}: {}", stderr.trim());
+    ytdlp::plain_reason(stderr)
+}
+
 struct DownloadJob {
+    generation: u64,
     id: u64,
     url: String,
     playlist_index: Option<u32>,
@@ -896,19 +1097,33 @@ fn download(job: &DownloadJob, cancel: &Cancel, tx: &Sender<Msg>) -> Result<Path
     let mut file: Option<PathBuf> = None;
     let mut last = Instant::now() - PROGRESS_EVERY;
     let mut processing = false;
-    let result = proc::run(&job.ytdlp, &args, cancel, |line| match ytdlp::parse_line(line) {
-        Line::File(path) => file = Some(path),
-        Line::Progress(p) => {
-            if last.elapsed() >= PROGRESS_EVERY || p.fraction == Some(1.0) {
-                last = Instant::now();
-                let _ = tx.send(Msg::Progress { id: job.id, fraction: p.fraction, speed: p.speed, processing });
+    let result = proc::run(&job.ytdlp, &args, cancel, |line| {
+        match ytdlp::parse_line(line) {
+            Line::File(path) => file = Some(path),
+            Line::Progress(p) => {
+                if last.elapsed() >= PROGRESS_EVERY || p.fraction == Some(1.0) {
+                    last = Instant::now();
+                    let _ = tx.send(Msg::Progress {
+                        id: job.id,
+                        generation: job.generation,
+                        fraction: p.fraction,
+                        speed: p.speed,
+                        processing,
+                    });
+                }
             }
+            Line::Processing => {
+                processing = true;
+                let _ = tx.send(Msg::Progress {
+                    id: job.id,
+                    generation: job.generation,
+                    fraction: Some(1.0),
+                    speed: None,
+                    processing,
+                });
+            }
+            Line::Other => {}
         }
-        Line::Processing => {
-            processing = true;
-            let _ = tx.send(Msg::Progress { id: job.id, fraction: Some(1.0), speed: None, processing });
-        }
-        Line::Other => {}
     });
     let fail = |reason: String| {
         let _ = fs::remove_dir_all(&job.dir);
@@ -922,7 +1137,7 @@ fn download(job: &DownloadJob, cancel: &Cancel, tx: &Sender<Msg>) -> Result<Path
         return fail("Canceled".into());
     }
     if !out.success {
-        return fail(ytdlp::short_reason(&out.stderr));
+        return fail(failure(&job.url, &out.stderr));
     }
     let found = file.filter(|f| f.exists()).or_else(|| {
         fs::read_dir(&job.dir)
@@ -939,6 +1154,14 @@ fn download(job: &DownloadJob, cancel: &Cancel, tx: &Sender<Msg>) -> Result<Path
 
 // Updates ------------------------------------------------------------------
 
+fn record_tool_check(state: &mut State, tool: Tool, now: u64) -> bool {
+    if !state.due(tool.key(), now) {
+        return false;
+    }
+    state.checked.insert(tool.key().into(), now);
+    true
+}
+
 fn spawn_updater(tx: Sender<Msg>, dirs: Dirs, resolved: Resolved, appimage: Option<PathBuf>) {
     spawn("updates", move || {
         let agent = net::agent();
@@ -946,21 +1169,20 @@ fn spawn_updater(tx: Sender<Msg>, dirs: Dirs, resolved: Resolved, appimage: Opti
         for tool in Tool::ALL {
             let have = resolved.version(tool).map(str::to_string);
             let now = now_secs();
-            if have.is_some() && !state.due(tool.key(), now) {
+            if !record_tool_check(&mut state, tool, now) {
                 continue;
             }
-            if have.is_some() {
-                state.checked.insert(tool.key().into(), now);
-                let _ = write_json(&dirs.state_file, &state);
-            }
-            let staged = tools::fetch_latest(&agent, tool)
-                .and_then(|latest| {
-                    if have.as_deref().is_none_or(|h| tools::is_newer(&latest.version, h)) {
-                        tools::stage(&agent, tool, &latest, &dirs.tools).map(Some)
-                    } else {
-                        Ok(None)
-                    }
-                });
+            let _ = write_json(&dirs.state_file, &state);
+            let staged = tools::fetch_latest(&agent, tool).and_then(|latest| {
+                if have
+                    .as_deref()
+                    .is_none_or(|h| tools::is_newer(&latest.version, h))
+                {
+                    tools::stage(&agent, tool, &latest, &dirs.tools).map(Some)
+                } else {
+                    Ok(None)
+                }
+            });
             match staged {
                 Ok(Some(staged)) => {
                     let _ = tx.send(Msg::ToolStaged(staged));
@@ -989,6 +1211,35 @@ fn spawn_updater(tx: Sender<Msg>, dirs: Dirs, resolved: Resolved, appimage: Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_attempt_does_not_match_current_job() {
+        let mut job = Job::new(1, "https://example.test".into());
+        job.stage = Stage::Downloading;
+        job.generation = 2;
+        assert!(!current_attempt(&job, 1, 1, Stage::Downloading));
+        assert!(current_attempt(&job, 1, 2, Stage::Downloading));
+    }
+
+    #[test]
+    fn missing_tool_check_is_recorded_before_download() {
+        let mut state = State::default();
+        assert!(record_tool_check(&mut state, Tool::Ytdlp, 100));
+        assert!(!record_tool_check(&mut state, Tool::Ytdlp, 101));
+        assert!(record_tool_check(&mut state, Tool::Ytdlp, 100 + 86400));
+    }
+
+    #[test]
+    fn cleans_only_matching_card_temps() {
+        let dir = tempfile::tempdir().unwrap();
+        let temp = dir.path().join(fixer::temp_name());
+        let other = dir.path().join(".sansa-other.part");
+        fs::write(&temp, b"x").unwrap();
+        fs::write(&other, b"x").unwrap();
+        clean_card_temps(dir.path());
+        assert!(!temp.exists());
+        assert!(other.exists());
+    }
 
     #[test]
     fn free_space_text() {

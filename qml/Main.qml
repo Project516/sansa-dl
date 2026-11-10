@@ -146,6 +146,7 @@ Kirigami.ApplicationWindow {
             id: list
             model: backend
             spacing: 0
+            currentIndex: -1
             reuseItems: true
             delegate: JobDelegate {
                 width: ListView.view.width

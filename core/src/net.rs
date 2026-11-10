@@ -1,7 +1,7 @@
 //! Blocking HTTP helpers.
 
 use sha2::{Digest, Sha256};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
@@ -40,21 +40,32 @@ pub fn get_json(agent: &ureq::Agent, url: &str) -> Result<serde_json::Value, Str
 
 /// Writes the body to `dest` and returns its SHA-256 as lowercase hex.
 pub fn download(agent: &ureq::Agent, url: &str, dest: &Path) -> Result<String, String> {
-    let mut response = agent.get(url).call().map_err(|e| format!("{url}: {e}"))?;
-    let mut reader = response.body_mut().with_config().limit(u64::MAX).reader();
-    let mut file = File::create(dest).map_err(|e| e.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 256 * 1024];
-    loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("{url}: {e}"))?;
-        if n == 0 {
-            break;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)
+        .map_err(|e| e.to_string())?;
+    let result = (|| {
+        let mut response = agent.get(url).call().map_err(|e| format!("{url}: {e}"))?;
+        let mut reader = response.body_mut().with_config().limit(u64::MAX).reader();
+
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; 256 * 1024];
+        loop {
+            let n = reader.read(&mut buf).map_err(|e| format!("{url}: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+            file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         }
-        hasher.update(&buf[..n]);
-        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        Ok(hex(&hasher.finalize()))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(dest);
     }
-    file.sync_all().map_err(|e| e.to_string())?;
-    Ok(hex(&hasher.finalize()))
+    result
 }
 
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
@@ -77,6 +88,19 @@ pub fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_does_not_follow_existing_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        let link = dir.path().join("link");
+        std::fs::write(&target, b"safe").unwrap();
+        symlink(&target, &link).unwrap();
+        assert!(download(&agent(), "http://127.0.0.1:1/", &link).is_err());
+        assert_eq!(std::fs::read(target).unwrap(), b"safe");
+        assert!(link.is_symlink());
+    }
 
     #[test]
     fn hashes_files() {

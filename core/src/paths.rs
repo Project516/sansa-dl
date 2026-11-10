@@ -125,7 +125,13 @@ mod tests {
         assert!(read_json::<Config>(&path).sponsorblock);
         fs::write(&path, "not json").unwrap();
         assert!(read_json::<Config>(&path).sponsorblock);
-        write_json(&path, &Config { sponsorblock: false }).unwrap();
+        write_json(
+            &path,
+            &Config {
+                sponsorblock: false,
+            },
+        )
+        .unwrap();
         assert!(!read_json::<Config>(&path).sponsorblock);
     }
 

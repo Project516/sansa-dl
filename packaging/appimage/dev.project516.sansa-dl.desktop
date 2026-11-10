@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sansa DL
+GenericName=Music Downloader
+Comment=Download music and copy it to a Sansa Clip+
+Exec=sansa-dl %U
+Icon=dev.project516.sansa-dl
+Terminal=false
+Categories=AudioVideo;Audio;Network;Qt;KDE;
+StartupWMClass=dev.project516.sansa-dl
+MimeType=

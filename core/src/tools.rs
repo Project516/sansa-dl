@@ -138,7 +138,11 @@ pub fn pick_ffmpeg(checksums: &str) -> Option<Latest> {
 }
 
 /// Version and asset links from a GitHub `releases/latest` answer.
-pub fn release_assets(release: &Value, asset: &str, sums: &str) -> Option<(String, String, String)> {
+pub fn release_assets(
+    release: &Value,
+    asset: &str,
+    sums: &str,
+) -> Option<(String, String, String)> {
     let url_of = |wanted: &str| {
         release
             .get("assets")?
@@ -158,15 +162,27 @@ pub fn release_assets(release: &Value, asset: &str, sums: &str) -> Option<(Strin
 
 pub fn fetch_latest(agent: &ureq::Agent, tool: Tool) -> Result<Latest, String> {
     let github = |repo: &str, asset: &str, sums: &str, sums_name: Option<&str>| {
-        let release = net::get_json(agent, &format!("https://api.github.com/repos/{repo}/releases/latest"))?;
+        let release = net::get_json(
+            agent,
+            &format!("https://api.github.com/repos/{repo}/releases/latest"),
+        )?;
         let (version, url, sums_url) = release_assets(&release, asset, sums)
             .ok_or_else(|| format!("{repo}: release has no {asset}"))?;
         let sha256 = find_sha(&net::get_text(agent, &sums_url)?, sums_name)
             .ok_or_else(|| format!("{repo}: no checksum for {asset}"))?;
-        Ok(Latest { version, url, sha256 })
+        Ok(Latest {
+            version,
+            url,
+            sha256,
+        })
     };
     match tool {
-        Tool::Ytdlp => github("yt-dlp/yt-dlp", "yt-dlp_linux", "SHA2-256SUMS", Some("yt-dlp_linux")),
+        Tool::Ytdlp => github(
+            "yt-dlp/yt-dlp",
+            "yt-dlp_linux",
+            "SHA2-256SUMS",
+            Some("yt-dlp_linux"),
+        ),
         Tool::Deno => github(
             "denoland/deno",
             "deno-x86_64-unknown-linux-gnu.zip",
@@ -199,7 +215,8 @@ fn read_versions(dir: &Path) -> BTreeMap<String, String> {
 
 fn usable(dir: &Path, tool: Tool) -> bool {
     tool.files().iter().all(|name| {
-        fs::metadata(dir.join(name)).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        fs::metadata(dir.join(name))
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
     })
 }
 
@@ -209,13 +226,22 @@ impl Resolved {
     pub fn load(tools: &Path, bundled: Option<&Path>) -> Self {
         let mut found = BTreeMap::new();
         for tool in Tool::ALL {
-            let candidates = [Some(tools), bundled].into_iter().flatten().filter_map(|dir| {
-                let version = read_versions(dir).remove(tool.key())?;
-                usable(dir, tool).then(|| Found { dir: dir.to_path_buf(), version })
-            });
+            let candidates = [Some(tools), bundled]
+                .into_iter()
+                .flatten()
+                .filter_map(|dir| {
+                    let version = read_versions(dir).remove(tool.key())?;
+                    usable(dir, tool).then(|| Found {
+                        dir: dir.to_path_buf(),
+                        version,
+                    })
+                });
             let mut best: Option<Found> = None;
             for candidate in candidates {
-                if best.as_ref().is_none_or(|b| is_newer(&candidate.version, &b.version)) {
+                if best
+                    .as_ref()
+                    .is_none_or(|b| is_newer(&candidate.version, &b.version))
+                {
                     best = Some(candidate);
                 }
             }
@@ -293,7 +319,10 @@ fn extract_ffmpeg(archive: &Path, dest: &Path) -> Result<(), String> {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?.into_owned();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let in_bin = path.parent().and_then(|p| p.file_name()).is_some_and(|d| d == "bin");
+        let in_bin = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .is_some_and(|d| d == "bin");
         if let Some(pos) = left.iter().position(|n| *n == name).filter(|_| in_bin) {
             entry.unpack(dest.join(name)).map_err(|e| e.to_string())?;
             left.swap_remove(pos);
@@ -329,7 +358,12 @@ fn check_runs(path: &Path, tool: Tool) -> Result<(), String> {
 
 /// Downloads `latest` into a temp folder inside `tools`, verifies the checksum
 /// and checks that the new binaries run. Nothing in use is touched.
-pub fn stage(agent: &ureq::Agent, tool: Tool, latest: &Latest, tools: &Path) -> Result<Staged, String> {
+pub fn stage(
+    agent: &ureq::Agent,
+    tool: Tool,
+    latest: &Latest,
+    tools: &Path,
+) -> Result<Staged, String> {
     let dir = tools.join(format!(".stage-{}", tool.key()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -347,7 +381,8 @@ pub fn stage(agent: &ureq::Agent, tool: Tool, latest: &Latest, tools: &Path) -> 
         let _ = fs::remove_file(&download);
         for name in tool.files() {
             let path = dir.join(name);
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .map_err(|e| e.to_string())?;
             check_runs(&path, tool)?;
         }
         Ok(())
@@ -410,7 +445,10 @@ mod tests {
         assert_eq!(find_sha(&sums, Some("yt-dlp_linux")).as_deref(), Some(B));
         assert_eq!(find_sha(&sums, Some("yt-dlp")).as_deref(), Some(A));
         assert_eq!(find_sha(&sums, Some("missing")), None);
-        assert_eq!(find_sha(&format!("{A}  deno.zip\n"), None).as_deref(), Some(A));
+        assert_eq!(
+            find_sha(&format!("{A}  deno.zip\n"), None).as_deref(),
+            Some(A)
+        );
         assert_eq!(find_sha(&format!("{A}\n"), None).as_deref(), Some(A));
         assert_eq!(find_sha("short  file", None), None);
     }
@@ -428,8 +466,14 @@ mod tests {
         let latest = pick_ffmpeg(&list).unwrap();
         assert_eq!(latest.version, "9.0");
         assert_eq!(latest.sha256, B);
-        assert!(latest.url.ends_with("/latest/ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz"));
-        let tens = format!("{A}  ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz\n{B}  ffmpeg-n10.1-latest-linux64-gpl-10.1.tar.xz\n");
+        assert!(
+            latest
+                .url
+                .ends_with("/latest/ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz")
+        );
+        let tens = format!(
+            "{A}  ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz\n{B}  ffmpeg-n10.1-latest-linux64-gpl-10.1.tar.xz\n"
+        );
         assert_eq!(pick_ffmpeg(&tens).unwrap().version, "10.1");
         assert_eq!(pick_ffmpeg("junk"), None);
     }
@@ -442,8 +486,12 @@ mod tests {
                 {"name":"deno.zip.sha256sum","browser_download_url":"https://x/sum"}]}"#,
         )
         .unwrap();
-        let (version, url, sums) = release_assets(&release, "deno.zip", "deno.zip.sha256sum").unwrap();
-        assert_eq!((version.as_str(), url.as_str(), sums.as_str()), ("2.9.8", "https://x/deno.zip", "https://x/sum"));
+        let (version, url, sums) =
+            release_assets(&release, "deno.zip", "deno.zip.sha256sum").unwrap();
+        assert_eq!(
+            (version.as_str(), url.as_str(), sums.as_str()),
+            ("2.9.8", "https://x/deno.zip", "https://x/sum")
+        );
         assert!(release_assets(&release, "other", "deno.zip.sha256sum").is_none());
     }
 
@@ -481,7 +529,10 @@ mod tests {
         fake_tool(&tools, Tool::Deno, "9.9.9");
         fs::set_permissions(tools.join("deno"), fs::Permissions::from_mode(0o644)).unwrap();
         fake_tool(&bundled, Tool::Deno, "2.0.0");
-        assert_eq!(Resolved::load(&tools, Some(&bundled)).version(Tool::Deno), Some("2.0.0"));
+        assert_eq!(
+            Resolved::load(&tools, Some(&bundled)).version(Tool::Deno),
+            Some("2.0.0")
+        );
         assert!(Resolved::load(&tools, None).deno().is_none());
     }
 
@@ -493,7 +544,11 @@ mod tests {
         let stage_dir = tools.join(".stage-ffmpeg");
         fake_tool(&stage_dir, Tool::Ffmpeg, "9.0");
         fs::write(stage_dir.join("ffmpeg"), "new").unwrap();
-        let staged = Staged { tool: Tool::Ffmpeg, version: "9.0".into(), dir: stage_dir.clone() };
+        let staged = Staged {
+            tool: Tool::Ffmpeg,
+            version: "9.0".into(),
+            dir: stage_dir.clone(),
+        };
         install(&staged, &tools).unwrap();
         assert_eq!(fs::read(tools.join("ffmpeg")).unwrap(), b"new");
         assert_eq!(read_versions(&tools)["ffmpeg"], "9.0");
@@ -516,9 +571,17 @@ mod tests {
                 let mut header = tar::Header::new_gnu();
                 header.set_size(body.len() as u64);
                 header.set_mode(0o755);
-                builder.append_data(&mut header, path, body.as_bytes()).unwrap();
+                builder
+                    .append_data(&mut header, path, body.as_bytes())
+                    .unwrap();
             }
-            builder.into_inner().unwrap().finish().unwrap().flush().unwrap();
+            builder
+                .into_inner()
+                .unwrap()
+                .finish()
+                .unwrap()
+                .flush()
+                .unwrap();
         }
         let out = dir.path().join("out");
         fs::create_dir(&out).unwrap();
@@ -534,7 +597,8 @@ mod tests {
         let archive = dir.path().join("deno.zip");
         {
             let mut zip = zip::ZipWriter::new(File::create(&archive).unwrap());
-            zip.start_file("deno", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.start_file("deno", zip::write::SimpleFileOptions::default())
+                .unwrap();
             zip.write_all(b"binary").unwrap();
             zip.finish().unwrap();
         }

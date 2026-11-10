@@ -2,10 +2,10 @@
 
 use crate::paths::APP_ID;
 use std::collections::HashMap;
+use zbus::MatchRule;
 use zbus::blocking::{Connection, MessageIterator, Proxy};
 use zbus::message::Type as MessageType;
 use zbus::zvariant::Value;
-use zbus::MatchRule;
 
 const DEST: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
@@ -48,26 +48,21 @@ fn send(count: usize, on_eject: impl FnOnce()) -> zbus::Result<()> {
 
     for message in signals.flatten() {
         let header = message.header();
-        match header.member().map(|m| m.as_str()) {
-            Some("ActionInvoked") => {
-                if let Ok((got, action)) = message.body().deserialize::<(u32, String)>()
-                    && got == id
-                    && action == "eject"
-                {
-                    on_eject();
-                    break;
-                }
-            }
-            Some("NotificationClosed") => {
-                if message
-                    .body()
-                    .deserialize::<(u32, u32)>()
-                    .is_ok_and(|(got, _)| got == id)
-                {
-                    break;
-                }
-            }
-            _ => {}
+        let member = header.member().map(|m| m.as_str());
+        let body = message.body();
+        if member == Some("ActionInvoked")
+            && let Ok((got, action)) = body.deserialize::<(u32, String)>()
+            && got == id
+            && action == "eject"
+        {
+            on_eject();
+            break;
+        }
+        if member == Some("NotificationClosed")
+            && let Ok((got, _)) = body.deserialize::<(u32, u32)>()
+            && got == id
+        {
+            break;
         }
     }
     Ok(())

@@ -33,6 +33,8 @@ pub struct Job {
     #[serde(skip)]
     pub running: bool,
     #[serde(skip)]
+    pub generation: u64,
+    #[serde(skip)]
     pub fraction: Option<f64>,
     #[serde(skip)]
     pub speed: Option<f64>,
@@ -53,6 +55,7 @@ impl Job {
             downloaded: None,
             outbox_file: None,
             running: false,
+            generation: 0,
             fraction: None,
             speed: None,
             processing: false,
@@ -71,7 +74,7 @@ impl Job {
     }
 
     pub fn can_retry(&self) -> bool {
-        matches!(self.stage, Stage::Failed | Stage::Canceled)
+        !self.running && matches!(self.stage, Stage::Failed | Stage::Canceled)
     }
 
     /// Where a retry picks up.
@@ -94,7 +97,11 @@ impl Job {
             Stage::Downloading if self.processing => "Processing".into(),
             Stage::Downloading => match (self.fraction, self.speed) {
                 (Some(f), Some(s)) => {
-                    format!("Downloading {}% at {}", (f * 100.0).floor(), format_speed(s))
+                    format!(
+                        "Downloading {}% at {}",
+                        (f * 100.0).floor(),
+                        format_speed(s)
+                    )
                 }
                 (Some(f), None) => format!("Downloading {}%", (f * 100.0).floor()),
                 _ => "Downloading".into(),
@@ -142,8 +149,11 @@ pub fn parse_links(text: &str) -> Vec<String> {
         let rest = token
             .strip_prefix("https://")
             .or_else(|| token.strip_prefix("http://"));
-        if rest.is_some_and(|r| r.chars().next().is_some_and(|c| c != '/' && c != '?' && c != '#'))
-            && !links.iter().any(|l| l == token)
+        if rest.is_some_and(|r| {
+            r.chars()
+                .next()
+                .is_some_and(|c| c != '/' && c != '?' && c != '#')
+        }) && !links.iter().any(|l| l == token)
         {
             links.push(token.to_string());
         }
@@ -180,7 +190,11 @@ mod tests {
         let text = "https://a.example/x  not-a-link\nhttp://b.example/y\u{2028}ftp://c.example\r\n<https://d.example/z>,";
         assert_eq!(
             parse_links(text),
-            ["https://a.example/x", "http://b.example/y", "https://d.example/z"]
+            [
+                "https://a.example/x",
+                "http://b.example/y",
+                "https://d.example/z"
+            ]
         );
     }
 
@@ -249,7 +263,13 @@ mod tests {
         let stages: Vec<_> = restored.iter().map(|j| j.stage).collect();
         assert_eq!(
             stages,
-            [Stage::Waiting, Stage::Waiting, Stage::Finding, Stage::WaitingCard, Stage::Failed]
+            [
+                Stage::Waiting,
+                Stage::Waiting,
+                Stage::Finding,
+                Stage::WaitingCard,
+                Stage::Failed
+            ]
         );
     }
 
