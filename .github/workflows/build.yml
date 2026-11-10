@@ -1,0 +1,72 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to put in the AppImage
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  CI:
+    runs-on: ubuntu-latest
+    container:
+      # The AppImage links the host Qt, so keep this on the same Fedora release as the supported desktop.
+      image: registry.fedoraproject.org/fedora:45@sha256:3632de47c2cef45d6a6ea6a420280ff9ce452e225a1b291299c105b9d9bae471
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Install build dependencies
+        # Fedora mirrors fail now and then; retry with a fresh mirror pick.
+        run: |
+          for attempt in 1 2 3; do
+            dnf install -y --setopt=install_weak_deps=False --setopt=retries=10 \
+              gcc gcc-c++ rust cargo clippy rustfmt \
+              qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kirigami qqc2-desktop-style \
+              curl jq unzip tar xz xz-devel squashfs-tools git findutils file which pkgconf-pkg-config mold \
+              && exit 0
+            dnf clean metadata
+            sleep 10
+          done
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          # PRs and master share one cache, so a PR starts warm.
+          shared-key: fedora-45
+          cache-on-failure: true
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --release -- -D warnings
+
+      - name: Fetch tools
+        run: packaging/appimage/fetch-tools.sh build/tools
+
+      # Release profile, so the AppImage build reuses these artifacts.
+      - name: Test
+        run: PATH="$PWD/build/tools:$PATH" cargo test --workspace --release
+
+      - name: Build the AppImage
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then export SANSA_DL_VERSION="$VERSION"; fi
+          packaging/appimage/build.sh
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sansa-dl-appimage
+          path: |
+            dist/*.AppImage
+            dist/*.AppImage.sha256
+          if-no-files-found: error
