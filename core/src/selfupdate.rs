@@ -7,8 +7,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 pub const CURRENT: &str = match option_env!("SANSA_DL_VERSION") {
-    Some(version) => version,
-    None => env!("CARGO_PKG_VERSION"),
+    Some(version) if !version.is_empty() => version,
+    _ => env!("CARGO_PKG_VERSION"),
 };
 
 const RELEASE: &str = "https://api.github.com/repos/Project516/sansa-dl/releases/latest";
