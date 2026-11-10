@@ -41,11 +41,17 @@ Kirigami.ApplicationWindow {
 
         actions: [
             Kirigami.Action {
+                id: sponsorAction
                 text: "Remove sponsor segments"
-                icon.name: "player-time"
                 checkable: true
                 checked: backend.sponsorBlock
                 onToggled: backend.setSponsorBlockEnabled(checked)
+                // A switch shows on and off plainly; the overflow menu still uses the check item.
+                displayComponent: Controls.Switch {
+                    text: sponsorAction.text
+                    checked: backend.sponsorBlock
+                    onToggled: backend.setSponsorBlockEnabled(checked)
+                }
             },
             Kirigami.Action {
                 text: "Clear finished"
