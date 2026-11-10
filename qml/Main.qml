@@ -40,24 +40,13 @@ Kirigami.ApplicationWindow {
         title: "Downloads"
 
         actions: [
+            // Always shown as a switch, so it never becomes an overflow menu item.
             Kirigami.Action {
-                id: sponsorAction
-                text: "Remove sponsor segments"
-                checkable: true
-                checked: backend.sponsorBlock
-                // A click replaces the binding with a fixed value, so bind to the backend again.
-                onToggled: {
-                    backend.setSponsorBlockEnabled(checked);
-                    checked = Qt.binding(() => backend.sponsorBlock);
-                }
-                // A switch shows on and off plainly; the overflow menu still uses the check item.
+                displayHint: Kirigami.DisplayHint.KeepVisible
                 displayComponent: Controls.Switch {
-                    text: sponsorAction.text
+                    text: "Remove sponsor segments"
                     checked: backend.sponsorBlock
-                    onToggled: {
-                        backend.setSponsorBlockEnabled(checked);
-                        checked = Qt.binding(() => backend.sponsorBlock);
-                    }
+                    onToggled: backend.setSponsorBlockEnabled(checked)
                 }
             },
             Kirigami.Action {
