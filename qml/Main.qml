@@ -40,12 +40,14 @@ Kirigami.ApplicationWindow {
         title: "Downloads"
 
         actions: [
+            // Always shown as a switch, so it never becomes an overflow menu item.
             Kirigami.Action {
-                text: "Remove sponsor segments"
-                icon.name: "player-time"
-                checkable: true
-                checked: backend.sponsorBlock
-                onToggled: backend.setSponsorBlockEnabled(checked)
+                displayHint: Kirigami.DisplayHint.KeepVisible
+                displayComponent: Controls.Switch {
+                    text: "Remove sponsor segments"
+                    checked: backend.sponsorBlock
+                    onToggled: backend.setSponsorBlockEnabled(checked)
+                }
             },
             Kirigami.Action {
                 text: "Clear finished"

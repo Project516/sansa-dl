@@ -109,7 +109,7 @@ pub mod qobject {
         fn eject(self: &Backend);
 
         #[qinvokable]
-        fn set_sponsor_block_enabled(self: &Backend, on: bool);
+        fn set_sponsor_block_enabled(self: Pin<&mut Backend>, on: bool);
 
         #[qinvokable]
         fn restart(self: Pin<&mut Backend>) -> bool;
@@ -341,7 +341,9 @@ impl qobject::Backend {
         }
     }
 
-    fn set_sponsor_block_enabled(&self, on: bool) {
+    fn set_sponsor_block_enabled(mut self: Pin<&mut Self>, on: bool) {
+        // Show the new value now; the engine confirms it with the same value.
+        self.as_mut().set_sponsor_block(on);
         if let Some(engine) = self.engine() {
             engine.set_sponsorblock(on);
         }
