@@ -64,7 +64,7 @@ pub fn read_json_checked<T: DeserializeOwned + Default>(path: &Path) -> (T, bool
         Ok(value) => (value, true),
         Err(e) if e.kind() == io::ErrorKind::NotFound => (T::default(), true),
         Err(e) => {
-            let bad = path.with_extension("json.bad");
+            let bad = free_backup_name(path);
             eprintln!("sansa-dl: could not read {}: {e}", path.display());
             if let Err(rename_error) = fs::rename(path, &bad) {
                 eprintln!(
@@ -75,6 +75,18 @@ pub fn read_json_checked<T: DeserializeOwned + Default>(path: &Path) -> (T, bool
             (T::default(), false)
         }
     }
+}
+
+/// `x.json.bad`, or `x.json.bad.2`, `.3`, ... so earlier backups are kept.
+fn free_backup_name(path: &Path) -> PathBuf {
+    let first = path.with_extension("json.bad");
+    if !first.exists() {
+        return first;
+    }
+    (2u32..)
+        .map(|n| path.with_extension(format!("json.bad.{n}")))
+        .find(|p| !p.exists())
+        .expect("a free backup name")
 }
 
 pub fn read_json<T: DeserializeOwned + Default>(path: &Path) -> T {
@@ -154,6 +166,26 @@ mod tests {
         )
         .unwrap();
         assert!(!read_json::<Config>(&path).sponsorblock);
+    }
+
+    #[test]
+    fn bad_files_never_overwrite_an_earlier_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        for (n, text) in ["first", "second", "third"].iter().enumerate() {
+            fs::write(&path, text).unwrap();
+            let (jobs, ok) = read_json_checked::<Vec<u64>>(&path);
+            assert!(!ok && jobs.is_empty(), "round {n}");
+        }
+        assert_eq!(fs::read(path.with_extension("json.bad")).unwrap(), b"first");
+        assert_eq!(
+            fs::read(path.with_extension("json.bad.2")).unwrap(),
+            b"second"
+        );
+        assert_eq!(
+            fs::read(path.with_extension("json.bad.3")).unwrap(),
+            b"third"
+        );
     }
 
     #[test]

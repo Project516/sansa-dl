@@ -211,7 +211,14 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
     let bundled = options.bundled_tools.clone();
     let (saved_jobs, jobs_ok) = read_json_checked::<Vec<Job>>(&dirs.jobs_file);
     let mut jobs = queue::restore(saved_jobs);
-    let next_id = jobs.iter().map(|j| j.id).max().unwrap_or(0) + 1;
+    // Download folders can outlive a lost jobs file; never reuse their ids.
+    let next_id = jobs
+        .iter()
+        .map(|j| j.id)
+        .chain(download_folder_ids(&dirs.downloads))
+        .max()
+        .unwrap_or(0)
+        + 1;
     for job in &mut jobs {
         job.running = false;
     }
@@ -276,6 +283,21 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         .spawn(move || core.run(rx))
         .expect("spawn coordinator");
     engine
+}
+
+/// Job ids of `<id>-<generation>` folders in the downloads dir.
+fn download_folder_ids(downloads: &Path) -> Vec<u64> {
+    fs::read_dir(downloads)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name();
+                    name.to_str()?.split('-').next()?.parse().ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn remove_stale_downloads(downloads: &Path, jobs: &[Job]) {
@@ -1308,5 +1330,17 @@ mod tests {
         assert!(dir.path().join("1").exists());
         assert!(!dir.path().join("2").exists());
         assert!(!dir.path().join("junk").exists());
+    }
+
+    #[test]
+    fn download_folder_ids_are_read_from_names() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["3-0", "7-2", "junk", "12"] {
+            fs::create_dir(dir.path().join(name)).unwrap();
+        }
+        let mut ids = download_folder_ids(dir.path());
+        ids.sort_unstable();
+        assert_eq!(ids, [3, 7, 12]);
+        assert!(download_folder_ids(&dir.path().join("missing")).is_empty());
     }
 }

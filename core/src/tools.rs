@@ -344,11 +344,26 @@ fn extract_deno(archive: &Path, dest: &Path) -> Result<(), String> {
 }
 
 fn check_runs(path: &Path, tool: Tool) -> Result<(), String> {
-    let out = Command::new(path)
-        .args(tool.version_args())
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    const TEXT_FILE_BUSY: i32 = 26;
+    let run = || {
+        Command::new(path)
+            .args(tool.version_args())
+            .stdin(Stdio::null())
+            .output()
+    };
+    // A child forked by another thread can briefly hold the just-written
+    // file open, so exec fails with ETXTBSY until that child execs.
+    let mut result = run();
+    for _ in 0..20 {
+        match &result {
+            Err(e) if e.raw_os_error() == Some(TEXT_FILE_BUSY) => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                result = run();
+            }
+            _ => break,
+        }
+    }
+    let out = result.map_err(|e| format!("{}: {e}", path.display()))?;
     if out.status.success() && !out.stdout.is_empty() {
         Ok(())
     } else {

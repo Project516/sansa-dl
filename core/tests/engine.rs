@@ -320,6 +320,10 @@ fn bad_jobs_file_keeps_downloads() {
     assert!(dirs.downloads.join("keep").exists());
     assert_eq!(
         fs::read_to_string(dirs.jobs_file.with_extension("json.bad")).unwrap(),
+        "older"
+    );
+    assert_eq!(
+        fs::read_to_string(dirs.jobs_file.with_extension("json.bad.2")).unwrap(),
         "broken"
     );
 }

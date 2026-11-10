@@ -175,16 +175,9 @@ fn a_tool_that_does_not_run_is_rejected() {
         url: format!("{base}/deno"),
         sha256: sha(broken),
     };
-    let mut err = String::new();
-    for _ in 0..20 {
-        err = tools::stage(&net::agent(), Tool::Ytdlp, &latest, tools_dir.path())
-            .err()
-            .unwrap();
-        if !err.contains("Text file busy") {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
-    }
+    let err = tools::stage(&net::agent(), Tool::Ytdlp, &latest, tools_dir.path())
+        .err()
+        .unwrap();
     assert!(err.contains("does not run"), "{err}");
     assert!(files_in(tools_dir.path()).is_empty());
 }
