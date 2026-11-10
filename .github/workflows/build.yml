@@ -22,11 +22,18 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Install build dependencies
+        # Fedora mirrors fail now and then; retry with a fresh mirror pick.
         run: |
-          dnf install -y --setopt=install_weak_deps=False \
-            gcc gcc-c++ rust cargo clippy rustfmt \
-            qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kirigami qqc2-desktop-style \
-            curl jq unzip tar xz xz-devel squashfs-tools git findutils file which pkgconf-pkg-config
+          for attempt in 1 2 3; do
+            dnf install -y --setopt=install_weak_deps=False --setopt=retries=10 \
+              gcc gcc-c++ rust cargo clippy rustfmt \
+              qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kirigami qqc2-desktop-style \
+              curl jq unzip tar xz xz-devel squashfs-tools git findutils file which pkgconf-pkg-config \
+              && exit 0
+            dnf clean metadata
+            sleep 10
+          done
+          exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
