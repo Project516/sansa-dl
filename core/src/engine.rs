@@ -94,6 +94,7 @@ enum Msg {
         generation: u64,
         result: Result<PathBuf, String>,
     },
+    Udisks(Udisks),
     Card(Result<Option<CardInfo>, String>),
     Mounted(Result<PathBuf, String>),
     Free(Option<u64>),
@@ -211,7 +212,6 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
     }
     remove_stale_downloads(&dirs.downloads, &jobs);
 
-    let udisks = options.card.then(|| Udisks::connect().ok()).flatten();
     let resolved = Resolved::load(&dirs.tools, bundled.as_deref());
     let core = Core {
         cfg: read_json(&dirs.config_file),
@@ -224,7 +224,7 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         tools: resolved.clone(),
         staged: Vec::new(),
         cancels: HashMap::new(),
-        udisks: udisks.clone(),
+        udisks: None,
         card: None,
         free: None,
         note: None,
@@ -242,13 +242,16 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         dirs: dirs.clone(),
     };
 
-    if let Some(udisks) = udisks {
-        let tx = tx.clone();
-        udisks.watch(move |card| {
-            let _ = tx.send(Msg::Card(card));
-        });
-    } else if options.card {
-        let _ = tx.send(Msg::Card(Err("UDisks2 is not available".into())));
+    if options.card {
+        let (connected, changed) = (tx.clone(), tx.clone());
+        Udisks::watch(
+            move |udisks| {
+                let _ = connected.send(Msg::Udisks(udisks));
+            },
+            move |card| {
+                let _ = changed.send(Msg::Card(card));
+            },
+        );
     }
     if options.updates {
         spawn_updater(tx, dirs, resolved, appimage);
@@ -552,6 +555,7 @@ impl Core {
                     self.show_all();
                 }
             }
+            Msg::Udisks(udisks) => self.udisks = Some(udisks),
             Msg::Card(result) => self.on_card(result),
             Msg::Mounted(result) => {
                 self.mounting = false;

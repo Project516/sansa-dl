@@ -147,40 +147,68 @@ impl Udisks {
         Ok(())
     }
 
-    /// Calls `on_change` with the card now and again whenever it appears,
-    /// goes away, or is mounted or unmounted.
+    /// Watches for the card on its own thread for the life of the app.
+    /// `on_connect` gets every new UDisks2 connection; `on_change` gets the
+    /// card now and whenever it appears, goes away, or is (un)mounted, and
+    /// errors while UDisks2 is unreachable. Lost connections are retried.
     pub fn watch(
-        self,
+        on_connect: impl Fn(Udisks) + Send + 'static,
         mut on_change: impl FnMut(Result<Option<CardInfo>, String>) + Send + 'static,
     ) {
         std::thread::spawn(move || {
-            let rule = MatchRule::builder()
-                .msg_type(MessageType::Signal)
-                .sender(DEST)
-                .expect("valid bus name")
-                .build();
-            let signals = MessageIterator::for_match_rule(rule, &self.conn, Some(64));
             let mut last: Option<Option<CardInfo>> = None;
-            let mut report = |now: Result<Option<CardInfo>, String>| match now {
-                Ok(card) if last.as_ref() == Some(&card) => {}
-                Ok(card) => {
-                    last = Some(card.clone());
-                    on_change(Ok(card));
+            let mut delay = RETRY_MIN;
+            loop {
+                let outcome = Udisks::connect().and_then(|udisks| {
+                    on_connect(udisks.clone());
+                    delay = RETRY_MIN;
+                    udisks.follow(&mut last, &mut on_change)
+                });
+                if let Err(e) = outcome {
+                    eprintln!("sansa-dl: card watch: {e}");
+                    last = None;
+                    on_change(Err(e));
                 }
-                Err(e) => on_change(Err(e)),
-            };
-            report(self.scan());
-            let Ok(signals) = signals else {
-                return;
-            };
-            for message in signals.flatten() {
-                if relevant(&message) {
-                    report(self.scan());
-                }
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(RETRY_MAX);
             }
         });
     }
+
+    /// Reports card changes until the signal stream fails or ends.
+    fn follow(
+        &self,
+        last: &mut Option<Option<CardInfo>>,
+        on_change: &mut impl FnMut(Result<Option<CardInfo>, String>),
+    ) -> Result<(), String> {
+        let rule = MatchRule::builder()
+            .msg_type(MessageType::Signal)
+            .sender(DEST)
+            .map_err(describe)?
+            .build();
+        let signals =
+            MessageIterator::for_match_rule(rule, &self.conn, Some(64)).map_err(describe)?;
+        let mut report = |now: Result<Option<CardInfo>, String>| match now {
+            Ok(card) if last.as_ref() == Some(&card) => {}
+            Ok(card) => {
+                *last = Some(card.clone());
+                on_change(Ok(card));
+            }
+            Err(e) => on_change(Err(e)),
+        };
+        report(self.scan());
+        for message in signals {
+            let message = message.map_err(describe)?;
+            if relevant(&message) {
+                report(self.scan());
+            }
+        }
+        Err("UDisks2 signal stream ended".into())
+    }
 }
+
+const RETRY_MIN: std::time::Duration = std::time::Duration::from_secs(2);
+const RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn relevant(message: &zbus::Message) -> bool {
     let header = message.header();
