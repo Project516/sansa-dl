@@ -45,12 +45,19 @@ Kirigami.ApplicationWindow {
                 text: "Remove sponsor segments"
                 checkable: true
                 checked: backend.sponsorBlock
-                onToggled: backend.setSponsorBlockEnabled(checked)
+                // A click replaces the binding with a fixed value, so bind to the backend again.
+                onToggled: {
+                    backend.setSponsorBlockEnabled(checked);
+                    checked = Qt.binding(() => backend.sponsorBlock);
+                }
                 // A switch shows on and off plainly; the overflow menu still uses the check item.
                 displayComponent: Controls.Switch {
                     text: sponsorAction.text
                     checked: backend.sponsorBlock
-                    onToggled: backend.setSponsorBlockEnabled(checked)
+                    onToggled: {
+                        backend.setSponsorBlockEnabled(checked);
+                        checked = Qt.binding(() => backend.sponsorBlock);
+                    }
                 }
             },
             Kirigami.Action {
