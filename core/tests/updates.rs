@@ -175,7 +175,30 @@ fn a_tool_that_does_not_run_is_rejected() {
         url: format!("{base}/deno"),
         sha256: sha(broken),
     };
-    // A non-zip deno download fails on extraction, before any swap.
+    let mut err = String::new();
+    for _ in 0..20 {
+        err = tools::stage(&net::agent(), Tool::Ytdlp, &latest, tools_dir.path())
+            .err()
+            .unwrap();
+        if !err.contains("Text file busy") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(err.contains("does not run"), "{err}");
+    assert!(files_in(tools_dir.path()).is_empty());
+}
+
+#[test]
+fn a_non_zip_deno_download_is_rejected() {
+    let broken: &[u8] = b"not a zip";
+    let base = serve(|_| HashMap::from([("/deno".to_string(), broken.to_vec())]));
+    let tools_dir = tempfile::tempdir().unwrap();
+    let latest = Latest {
+        version: "1.0.0".into(),
+        url: format!("{base}/deno"),
+        sha256: sha(broken),
+    };
     assert!(tools::stage(&net::agent(), Tool::Deno, &latest, tools_dir.path()).is_err());
     assert!(files_in(tools_dir.path()).is_empty());
 }

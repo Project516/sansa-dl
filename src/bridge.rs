@@ -33,6 +33,7 @@ pub mod qobject {
         #[qproperty(bool, sponsor_block)]
         #[qproperty(QString, tools_note)]
         #[qproperty(QString, updated_version)]
+        #[qproperty(QString, restart_error)]
         #[qproperty(bool, has_finished)]
         type Backend = super::BackendRust;
 
@@ -111,7 +112,7 @@ pub mod qobject {
         fn set_sponsor_block_enabled(self: &Backend, on: bool);
 
         #[qinvokable]
-        fn restart(self: &Backend);
+        fn restart(self: Pin<&mut Backend>) -> bool;
 
         #[qinvokable]
         fn shutdown(self: &Backend);
@@ -153,6 +154,7 @@ pub struct BackendRust {
     sponsor_block: bool,
     tools_note: QString,
     updated_version: QString,
+    restart_error: QString,
     has_finished: bool,
     rows: Vec<JobView>,
     engine: Option<Engine>,
@@ -346,14 +348,28 @@ impl qobject::Backend {
     }
 
     /// Starts a fresh copy of the app. The caller quits this one.
-    fn restart(&self) {
-        let Some(appimage) = std::env::var_os("APPIMAGE") else {
-            return;
-        };
-        if let Some(instance) = &self.rust().instance {
-            instance.release();
+    fn restart(mut self: Pin<&mut Self>) -> bool {
+        let result = std::env::var_os("APPIMAGE")
+            .ok_or_else(|| std::io::Error::other("AppImage path is unavailable"))
+            .and_then(|appimage| {
+                std::process::Command::new(appimage)
+                    .arg("--restart")
+                    .spawn()
+            });
+        match result {
+            Ok(_) => {
+                if let Some(instance) = &self.rust().instance {
+                    instance.release();
+                }
+                true
+            }
+            Err(error) => {
+                let message = format!("Could not restart: {error}");
+                eprintln!("sansa-dl: {message}");
+                self.as_mut().set_restart_error(QString::from(&message));
+                false
+            }
         }
-        let _ = std::process::Command::new(appimage).spawn();
     }
 
     fn shutdown(&self) {

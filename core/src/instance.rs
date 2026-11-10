@@ -42,7 +42,7 @@ pub enum Role {
 }
 
 /// Takes the bus name, or forwards `urls` to whoever has it.
-pub fn claim(urls: &[String]) -> Role {
+pub fn claim(urls: &[String], restart: bool) -> Role {
     let (opened_tx, opened) = channel();
     let built = connection::Builder::session()
         .and_then(|b| b.serve_at(OBJECT_PATH, Service { opened: opened_tx }))
@@ -55,7 +55,20 @@ pub fn claim(urls: &[String]) -> Role {
         }
     };
     // Without DoNotQueue a second process could replace the first owner.
-    match conn.request_name_with_flags(BUS_NAME, RequestNameFlags::DoNotQueue.into()) {
+    let mut requested = conn.request_name_with_flags(BUS_NAME, RequestNameFlags::DoNotQueue.into());
+    if restart {
+        for _ in 0..100 {
+            if !matches!(
+                requested,
+                Ok(RequestNameReply::Exists) | Err(zbus::Error::NameTaken)
+            ) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            requested = conn.request_name_with_flags(BUS_NAME, RequestNameFlags::DoNotQueue.into());
+        }
+    }
+    match requested {
         Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
             Role::Primary(Some((Instance { conn }, opened)))
         }

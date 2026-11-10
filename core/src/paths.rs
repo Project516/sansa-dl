@@ -57,11 +57,28 @@ impl Dirs {
     }
 }
 
+pub fn read_json_checked<T: DeserializeOwned + Default>(path: &Path) -> (T, bool) {
+    let result =
+        fs::read(path).and_then(|bytes| serde_json::from_slice(&bytes).map_err(io::Error::other));
+    match result {
+        Ok(value) => (value, true),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => (T::default(), true),
+        Err(e) => {
+            let bad = path.with_extension("json.bad");
+            eprintln!("sansa-dl: could not read {}: {e}", path.display());
+            if let Err(rename_error) = fs::rename(path, &bad) {
+                eprintln!(
+                    "sansa-dl: could not preserve {}: {rename_error}",
+                    path.display()
+                );
+            }
+            (T::default(), false)
+        }
+    }
+}
+
 pub fn read_json<T: DeserializeOwned + Default>(path: &Path) -> T {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    read_json_checked(path).0
 }
 
 pub fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
@@ -125,6 +142,10 @@ mod tests {
         assert!(read_json::<Config>(&path).sponsorblock);
         fs::write(&path, "not json").unwrap();
         assert!(read_json::<Config>(&path).sponsorblock);
+        assert_eq!(
+            fs::read_to_string(path.with_extension("json.bad")).unwrap(),
+            "not json"
+        );
         write_json(
             &path,
             &Config {

@@ -37,7 +37,7 @@ done
 case "$*" in
   *" -J "*)
     case "$last" in
-      *bad*) echo "ERROR: [generic] bad: Unable to download webpage: HTTP Error 404: Not Found (caused by <HTTPError 404>)" >&2; exit 1;;
+      *bad*) sleep 0.3; echo "ERROR: [generic] bad: Unable to download webpage: HTTP Error 404: Not Found (caused by <HTTPError 404>)" >&2; exit 1;;
       *list*) echo '{"_type":"playlist","entries":[{"url":"https://example.test/a","title":"First"},{"url":"https://example.test/b","title":"Second"}]}';;
       *) echo '{"id":"x","title":"Single Song"}';;
     esac
@@ -204,6 +204,7 @@ fn a_bad_link_fails_on_its_own_row_and_retry_runs_it_again() {
     assert!(failed.can_retry && !failed.can_cancel);
 
     rig.engine.retry(failed.id);
+    rig.wait("the retry to start", |jobs| jobs[0].stage == "finding");
     rig.wait("the retried row to fail again", |jobs| {
         jobs[0].stage == "failed"
     });
@@ -264,4 +265,61 @@ fn the_queue_survives_a_restart() {
     assert_eq!(restored.len(), 1);
     assert_eq!(restored[0].stage, "card");
     assert_eq!(restored[0].title, "Single Song");
+}
+
+#[test]
+fn shutdown_keeps_a_running_download_resumable() {
+    let rig = rig!();
+    rig.engine
+        .add_links(vec!["https://example.test/slow".into()]);
+    rig.wait("the download to start", |jobs| {
+        jobs.len() == 1 && jobs[0].stage == "downloading"
+    });
+    rig.engine.shutdown();
+    std::thread::sleep(Duration::from_millis(500));
+    let saved = fs::read_to_string(&rig.dirs.jobs_file).unwrap();
+    let jobs: Vec<sansa_dl_core::queue::Job> = serde_json::from_str(&saved).unwrap();
+    assert_ne!(jobs[0].stage, sansa_dl_core::queue::Stage::Failed);
+    assert_eq!(
+        sansa_dl_core::queue::restore(jobs)[0].stage,
+        sansa_dl_core::queue::Stage::Waiting
+    );
+}
+
+#[test]
+fn bad_jobs_file_keeps_downloads() {
+    let root = tempfile::tempdir().unwrap();
+    let dirs = Dirs::under(&root.path().join("data"), &root.path().join("config"));
+    dirs.create().unwrap();
+    fs::create_dir(dirs.downloads.join("keep")).unwrap();
+    fs::write(dirs.jobs_file.with_extension("json.bad"), "older").unwrap();
+    fs::write(&dirs.jobs_file, "broken").unwrap();
+    let engine = engine::start_with(
+        dirs.clone(),
+        None,
+        Arc::new(|_| {}),
+        Options {
+            card: false,
+            updates: false,
+            bundled_tools: None,
+        },
+    );
+    engine.shutdown();
+    assert!(dirs.downloads.join("keep").exists());
+    let second = engine::start_with(
+        dirs.clone(),
+        None,
+        Arc::new(|_| {}),
+        Options {
+            card: false,
+            updates: false,
+            bundled_tools: None,
+        },
+    );
+    second.shutdown();
+    assert!(dirs.downloads.join("keep").exists());
+    assert_eq!(
+        fs::read_to_string(dirs.jobs_file.with_extension("json.bad")).unwrap(),
+        "broken"
+    );
 }

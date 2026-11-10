@@ -32,7 +32,7 @@ fn main() {
     }
     let links = queue::parse_links(&args.join(" "));
 
-    match instance::claim(&links) {
+    match instance::claim(&links, args.iter().any(|a| a == "--restart")) {
         Role::Forwarded => return,
         Role::Primary(held) => *INSTANCE.lock().expect("fresh lock") = held,
     }

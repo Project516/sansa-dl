@@ -2,7 +2,7 @@
 //! the UI and from worker threads. Nothing polls.
 
 use crate::card::{CardInfo, Udisks};
-use crate::paths::{Config, Dirs, State, now_secs, read_json, write_json};
+use crate::paths::{Config, Dirs, State, now_secs, read_json, read_json_checked, write_json};
 use crate::proc::{self, Cancel};
 use crate::queue::{self, Job, Stage};
 use crate::tools::{self, Resolved, Staged, Tool};
@@ -159,6 +159,8 @@ struct Core {
     jobs: Vec<Job>,
     next_id: u64,
     dirty: bool,
+    jobs_writable: bool,
+    config_writable: bool,
     bundled: Option<PathBuf>,
     tools: Resolved,
     staged: Vec<Staged>,
@@ -173,6 +175,8 @@ struct Core {
     eject_after_copy: bool,
     transferring: bool,
     transfer_failed: bool,
+    stopping: bool,
+    card_cleanup_pending: bool,
     stop_transfer: Arc<AtomicBool>,
     batch_copied: usize,
     last_waiting: Option<usize>,
@@ -205,16 +209,24 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
     tools::clean_stages(&dirs.tools);
 
     let bundled = options.bundled_tools.clone();
-    let mut jobs = queue::restore(read_json::<Vec<Job>>(&dirs.jobs_file));
+    let (saved_jobs, jobs_ok) = read_json_checked::<Vec<Job>>(&dirs.jobs_file);
+    let mut jobs = queue::restore(saved_jobs);
     let next_id = jobs.iter().map(|j| j.id).max().unwrap_or(0) + 1;
     for job in &mut jobs {
         job.running = false;
     }
-    remove_stale_downloads(&dirs.downloads, &jobs);
+    if jobs_ok && !dirs.jobs_file.with_extension("json.bad").exists() {
+        remove_stale_downloads(&dirs.downloads, &jobs);
+    }
 
+    let (cfg, config_ok) = read_json_checked(&dirs.config_file);
+    let jobs_writable = jobs_ok || !dirs.jobs_file.exists();
+    let config_writable = config_ok || !dirs.config_file.exists();
     let resolved = Resolved::load(&dirs.tools, bundled.as_deref());
     let core = Core {
-        cfg: read_json(&dirs.config_file),
+        cfg,
+        jobs_writable,
+        config_writable,
         emit,
         tx: tx.clone(),
         jobs,
@@ -234,6 +246,8 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         eject_after_copy: false,
         transferring: false,
         transfer_failed: false,
+        stopping: false,
+        card_cleanup_pending: false,
         stop_transfer: Arc::new(AtomicBool::new(false)),
         batch_copied: 0,
         last_waiting: None,
@@ -364,7 +378,7 @@ impl Core {
     }
 
     fn flush(&mut self) {
-        if self.dirty {
+        if self.dirty && self.jobs_writable {
             self.dirty = false;
             let _ = write_json(&self.dirs.jobs_file, &self.jobs);
         }
@@ -477,7 +491,9 @@ impl Core {
             }
             Msg::SetSponsorBlock(on) => {
                 self.cfg.sponsorblock = on;
-                let _ = write_json(&self.dirs.config_file, &self.cfg);
+                if self.config_writable {
+                    let _ = write_json(&self.dirs.config_file, &self.cfg);
+                }
                 (self.emit)(UiEvent::SponsorBlock(on));
             }
             Msg::Discovered {
@@ -607,6 +623,8 @@ impl Core {
             Msg::ToolStaged(staged) => self.staged.push(staged),
             Msg::AppUpdated(version) => (self.emit)(UiEvent::Updated(version)),
             Msg::Shutdown(ack) => {
+                self.stopping = true;
+                self.stop_transfer.store(true, Ordering::SeqCst);
                 for cancel in self.cancels.values() {
                     cancel.cancel();
                 }
@@ -649,6 +667,7 @@ impl Core {
         };
         self.jobs[pos].running = false;
         match result {
+            Err(reason) if self.stopping && reason == "Canceled" => {}
             Err(reason) => {
                 self.jobs[pos].stage = Stage::Failed;
                 self.jobs[pos].reason = reason;
@@ -680,12 +699,14 @@ impl Core {
 
     fn downloaded(&mut self, id: u64, result: Result<PathBuf, String>) {
         self.cancels.remove(&id);
+        let stopping = self.stopping;
         let Some(job) = self.job_mut(id).filter(|j| j.stage == Stage::Downloading) else {
             return;
         };
         job.running = false;
         job.processing = false;
         match result {
+            Err(reason) if stopping && reason == "Canceled" => {}
             Ok(file) => {
                 job.downloaded = Some(file);
                 job.stage = Stage::Fixing;
@@ -747,24 +768,26 @@ impl Core {
                     }
                 }
                 self.card = None;
+                self.ejected_block = None;
             }
             Ok(Some(info)) => {
                 let appeared = self.card.as_ref().is_none_or(|c| c.block != info.block);
                 let newly_mounted = info.mount.is_some()
                     && (appeared || self.card.as_ref().is_some_and(|c| c.mount.is_none()));
-                if appeared {
+                if appeared && self.ejected_block.as_ref() != Some(&info.block) {
                     self.note = None;
                     self.free = None;
                     self.ejected_block = None;
                     self.transfer_failed = false;
                 }
+                if self.ejected_block.as_ref() == Some(&info.block) {
+                    self.note = Some(CardNote::Safe);
+                }
                 if newly_mounted {
                     self.transfer_failed = false;
+                    self.card_cleanup_pending = true;
                 }
                 self.card = Some(info.clone());
-                if let (true, Some(mount)) = (newly_mounted, &info.mount) {
-                    self.read_free_space(mount.clone());
-                }
                 let wanted = appeared || self.last_waiting.unwrap_or(0) > 0;
                 let skip = self.mounting
                     || self.ejecting
@@ -781,9 +804,6 @@ impl Core {
     fn read_free_space(&self, mount: PathBuf) {
         let tx = self.tx.clone();
         spawn("free-space", move || {
-            if transfer::mount_device(&mount).is_ok() {
-                clean_card_temps(&mount.join("Tracks"));
-            }
             let _ = tx.send(Msg::Free(transfer::free_space(&mount)));
         });
     }
@@ -874,11 +894,16 @@ impl Core {
             })
             .collect();
         self.transferring = true;
+        self.card_cleanup_pending = false;
         let tx = self.tx.clone();
         let stop = self.stop_transfer.clone();
         let tracks = mount.join("Tracks");
         spawn("transfer", move || {
             let device = transfer::mount_device(tracks.parent().unwrap());
+            if device.is_ok() {
+                clean_card_temps(&tracks);
+            }
+            let _ = tx.send(Msg::Free(transfer::free_space(tracks.parent().unwrap())));
             for (id, file) in work {
                 if stop.load(Ordering::SeqCst) {
                     break;
@@ -927,15 +952,22 @@ impl Core {
     }
 
     fn schedule(&mut self) {
+        if self.stopping {
+            return;
+        }
         self.swap_tools();
         if self.staged.is_empty() {
             self.start_jobs();
         }
         let waiting = self.last_waiting.unwrap_or(0) > 0;
         let idle = !self.ejecting && !self.eject_after_copy && self.ejected_block.is_none();
-        if waiting
+        if (waiting || self.card_cleanup_pending)
             && idle
             && !self.transferring
+            && !self
+                .jobs
+                .iter()
+                .any(|j| j.running && matches!(j.stage, Stage::Fixing | Stage::Canceled))
             && !self.transfer_failed
             && let Some(mount) = self.card.as_ref().and_then(|c| c.mount.clone())
         {

@@ -107,6 +107,8 @@ fn copy_checked(outbox_file: &Path, tracks: &Path, device: Option<u64>) -> io::R
             break;
         }
         if same_content(outbox_file, &candidate, false)? {
+            File::open(&candidate)?.sync_all()?;
+            File::open(tracks)?.sync_all()?;
             check_mount(mount, device)?;
             fs::remove_file(outbox_file)?;
             return Ok(Outcome::AlreadyThere);

@@ -64,18 +64,18 @@ pub fn run(
     }
     let mut stderr = child.stderr.take().expect("piped");
     let errors = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stderr.read_to_string(&mut text);
-        text
+        let mut bytes = Vec::new();
+        let _ = stderr.read_to_end(&mut bytes);
+        String::from_utf8_lossy(&bytes).into_owned()
     });
     let stdout = child.stdout.take().expect("piped");
     let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
+    let mut line = Vec::new();
     loop {
         line.clear();
-        match reader.read_line(&mut line) {
+        match reader.read_until(b'\n', &mut line) {
             Ok(0) | Err(_) => break,
-            Ok(_) => on_line(&line),
+            Ok(_) => on_line(&String::from_utf8_lossy(&line)),
         }
     }
     let status = child.wait()?;
@@ -129,6 +129,22 @@ mod tests {
         assert!(begin.elapsed() < std::time::Duration::from_secs(5));
         assert_eq!(lines, ["started"]);
         assert!(!success);
+    }
+
+    #[test]
+    fn drains_invalid_utf8_from_both_pipes() {
+        let (program, args) =
+            sh("printf '\\377\\n'; printf '\\377' >&2; head -c 200000 /dev/zero >&2; echo done");
+        let mut lines = Vec::new();
+        let out = run(&program, &args, &Cancel::default(), |line| {
+            lines.push(line.to_string())
+        })
+        .unwrap();
+        assert!(out.success);
+        assert!(lines[0].contains('�'));
+        assert!(lines.last().unwrap().contains("done"));
+        assert!(out.stderr.starts_with('�'));
+        assert!(out.stderr.len() > 200000);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Makes a downloaded track playable on the Sansa and moves it into the outbox.
 
 use crate::rules::{self, Audio, TrackInfo};
+use rustix::fs::{CWD, RenameFlags, renameat_with};
 use serde_json::Value;
 use std::fs;
 use std::io;
@@ -206,17 +207,23 @@ pub fn fix(tools: &Ffmpeg, input: &Path, outbox: &Path) -> Result<PathBuf, Strin
     result
 }
 
-// A hard link never replaces an existing name, so two fixes cannot clobber each other.
 fn publish(temp: &Path, dir: &Path, stem: &str, ext: &str) -> io::Result<PathBuf> {
     for number in 1.. {
         let target = dir.join(rules::numbered_name(stem, ext, number));
-        match fs::hard_link(temp, &target) {
-            Ok(()) => return Ok(target),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(_) if !target.exists() => {
-                fs::rename(temp, &target)?;
-                return Ok(target);
+        let result = match renameat_with(CWD, temp, CWD, &target, RenameFlags::NOREPLACE) {
+            Ok(()) => Ok(()),
+            Err(rustix::io::Errno::INVAL) => {
+                if target.exists() {
+                    Err(io::ErrorKind::AlreadyExists.into())
+                } else {
+                    fs::rename(temp, &target)
+                }
             }
+            Err(e) => Err(io::Error::from_raw_os_error(e.raw_os_error())),
+        };
+        match result {
+            Ok(()) => return Ok(target),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
         }
     }
@@ -279,6 +286,13 @@ mod tests {
         assert_eq!(fs::read(dir.path().join("Song.mp3")).unwrap(), [0]);
         assert_eq!(fs::read(dir.path().join("Song (2).mp3")).unwrap(), [1]);
         assert_eq!(fs::read(dir.path().join("Song (3).mp3")).unwrap(), [2]);
+    }
+
+    #[test]
+    fn publish_returns_other_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = publish(&dir.path().join("missing"), dir.path(), "Song", "mp3").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]

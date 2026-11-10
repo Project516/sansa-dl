@@ -161,8 +161,12 @@ impl Udisks {
             loop {
                 let outcome = Udisks::connect().and_then(|udisks| {
                     on_connect(udisks.clone());
-                    delay = RETRY_MIN;
-                    udisks.follow(&mut last, &mut on_change)
+                    let started = std::time::Instant::now();
+                    let result = udisks.follow(&mut last, &mut on_change);
+                    if started.elapsed() >= RETRY_MAX {
+                        delay = RETRY_MIN;
+                    }
+                    result
                 });
                 if let Err(e) = outcome {
                     eprintln!("sansa-dl: card watch: {e}");
@@ -188,14 +192,7 @@ impl Udisks {
             .build();
         let signals =
             MessageIterator::for_match_rule(rule, &self.conn, Some(64)).map_err(describe)?;
-        let mut report = |now: Result<Option<CardInfo>, String>| match now {
-            Ok(card) if last.as_ref() == Some(&card) => {}
-            Ok(card) => {
-                *last = Some(card.clone());
-                on_change(Ok(card));
-            }
-            Err(e) => on_change(Err(e)),
-        };
+        let mut report = |now| report_change(last, on_change, now);
         report(self.scan());
         for message in signals {
             let message = message.map_err(describe)?;
@@ -204,6 +201,24 @@ impl Udisks {
             }
         }
         Err("UDisks2 signal stream ended".into())
+    }
+}
+
+fn report_change(
+    last: &mut Option<Option<CardInfo>>,
+    on_change: &mut impl FnMut(Result<Option<CardInfo>, String>),
+    now: Result<Option<CardInfo>, String>,
+) {
+    match now {
+        Ok(card) if last.as_ref() == Some(&card) => {}
+        Ok(card) => {
+            *last = Some(card.clone());
+            on_change(Ok(card));
+        }
+        Err(e) => {
+            *last = None;
+            on_change(Err(e));
+        }
     }
 }
 
@@ -260,6 +275,24 @@ mod tests {
             .into_iter()
             .map(|(path, ifaces)| (OwnedObjectPath::try_from(path).unwrap(), ifaces))
             .collect()
+    }
+
+    #[test]
+    fn reports_the_same_card_after_a_scan_error() {
+        let card = find_card(&objects(vec![(
+            "/o/b1",
+            object("SANSA", "vfat", None, "/"),
+        )]));
+        let mut last = None;
+        let mut reports = Vec::new();
+        let mut record = |result| reports.push(result);
+        report_change(&mut last, &mut record, Ok(card.clone()));
+        report_change(&mut last, &mut record, Ok(card.clone()));
+        report_change(&mut last, &mut record, Err("scan failed".into()));
+        report_change(&mut last, &mut record, Ok(card));
+        assert_eq!(reports.len(), 3);
+        assert!(reports[1].is_err());
+        assert!(reports[2].as_ref().unwrap().is_some());
     }
 
     #[test]

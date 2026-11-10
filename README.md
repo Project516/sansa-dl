@@ -33,9 +33,11 @@ The app updates itself once a day. After an update it asks you to restart.
 Paste one or more links into the field and press Enter or Add. You can also drop links on the window. The field clears at once, so you can paste the next link right away.
 
 ```
-sansa-dl <link>...   add links to the running window, or start the app with them
-sansa-dl --eject     eject the card, as the Eject button does
+./sansa-dl-<version>-x86_64.AppImage <link>...   add links to the running window, or start the app with them
+./sansa-dl-<version>-x86_64.AppImage --eject     eject the card, as the Eject button does
 ```
+
+The launcher entry runs the same AppImage.
 
 When the Sansa's card is plugged in (a FAT32 volume labeled `SANSA`), the app mounts it and copies the waiting songs. A desktop notification tells you how many were copied and offers Eject.
 

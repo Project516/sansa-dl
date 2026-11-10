@@ -14,6 +14,7 @@ permissions:
 
 jobs:
   version:
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -22,15 +23,21 @@ jobs:
       - id: version
         run: |
           base=$(sed -n 's/^version = "\([0-9]*\.[0-9]*\)\..*"/\1/p' Cargo.toml | head -1)
+          if [[ ! "$base" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Could not read a major.minor version from Cargo.toml"
+            exit 1
+          fi
           echo "version=$base.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
   build:
+    if: github.ref == 'refs/heads/master'
     needs: version
     uses: ./.github/workflows/build.yml
     with:
       version: ${{ needs.version.outputs.version }}
 
   release:
+    if: github.ref == 'refs/heads/master'
     needs: [version, build]
     runs-on: ubuntu-latest
     permissions:

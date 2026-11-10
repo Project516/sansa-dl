@@ -118,11 +118,18 @@ Kirigami.ApplicationWindow {
                             text: "Restart"
                             icon.name: "view-refresh"
                             onTriggered: {
-                                backend.restart();
-                                Qt.quit();
+                                if (backend.restart())
+                                    Qt.quit();
                             }
                         }
                     ]
+                }
+
+                Kirigami.InlineMessage {
+                    Layout.fillWidth: true
+                    visible: backend.restartError !== ""
+                    type: Kirigami.MessageType.Error
+                    text: backend.restartError
                 }
 
                 Kirigami.InlineMessage {
@@ -164,7 +171,8 @@ Kirigami.ApplicationWindow {
             }
 
             DropArea {
-                anchors.fill: parent
+                parent: list.parent
+                anchors.fill: list
                 onDropped: drop => {
                     if (drop.hasText)
                         backend.addLinks(drop.text);
