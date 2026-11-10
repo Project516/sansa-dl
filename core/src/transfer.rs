@@ -49,8 +49,7 @@ pub fn same_content(first: &Path, second: &Path, fresh: bool) -> io::Result<bool
     }
 }
 
-/// On success the outbox file is deleted. It is also deleted when an identical
-/// file is already on the card. On failure it stays and no partial file is left.
+/// The device id of a mount point, or an error when nothing is mounted there.
 pub fn mount_device(mount: &Path) -> io::Result<u64> {
     let device = fs::metadata(mount)?.dev();
     let parent = mount
@@ -71,6 +70,8 @@ fn check_mount(mount: &Path, device: Option<u64>) -> io::Result<()> {
     Ok(())
 }
 
+/// On success the outbox file is deleted. It is also deleted when an identical
+/// file is already on the card. On failure it stays and no partial file is left.
 pub fn copy_to_card(outbox_file: &Path, tracks: &Path) -> io::Result<Outcome> {
     let mount = tracks
         .parent()
