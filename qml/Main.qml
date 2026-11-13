@@ -63,8 +63,8 @@ Kirigami.ApplicationWindow {
                 Controls.TextField {
                     id: musicQuery
                     Layout.fillWidth: true
-                    placeholderText: "Artist or song"
-                    Accessible.name: "Artist or song"
+                    placeholderText: "Artist and song"
+                    Accessible.name: "Artist and song"
                     onAccepted: musicDialog.search()
                 }
                 Controls.Button {
