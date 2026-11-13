@@ -67,7 +67,7 @@ $('#download-form').addEventListener('submit', async (event) => {
     validateMp3(bytes);
     downloadURL = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
     save.href = downloadURL;
-    save.download = safeName(files[0].name);
+    save.download = safeName(files[0].name || info.title || 'audio');
     save.hidden = false;
     status.textContent = 'Your MP3 is ready.';
   } catch (error) {
