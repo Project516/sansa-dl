@@ -18,6 +18,13 @@ pub struct Ffmpeg {
     pub ffprobe: PathBuf,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Metadata {
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+}
+
 pub fn temp_name() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
@@ -152,6 +159,15 @@ pub fn probe(ffprobe: &Path, file: &Path) -> Result<TrackInfo, String> {
 
 /// Returns the fixed file inside `outbox`. The input is left alone.
 pub fn fix(tools: &Ffmpeg, input: &Path, outbox: &Path) -> Result<PathBuf, String> {
+    fix_with_metadata(tools, input, outbox, None)
+}
+
+pub fn fix_with_metadata(
+    tools: &Ffmpeg,
+    input: &Path,
+    outbox: &Path,
+    metadata: Option<&Metadata>,
+) -> Result<PathBuf, String> {
     fs::create_dir_all(outbox).map_err(|e| format!("outbox: {e}"))?;
     let info = probe(&tools.ffprobe, input)?;
     let tag_bytes = rules::id3_size_of(input).map_err(|e| format!("read: {e}"))?;
@@ -164,11 +180,24 @@ pub fn fix(tools: &Ffmpeg, input: &Path, outbox: &Path) -> Result<PathBuf, Strin
     args.push(input.to_string_lossy().into_owned());
     args.extend(plan.args.iter().cloned());
     let blank = |key: &str| info.tags.get(key).is_none_or(|v| v.trim().is_empty());
-    if blank("album")
+    if metadata.is_none()
+        && blank("album")
         && let Some(artist) = info.tags.get("artist").filter(|a| !a.trim().is_empty())
     {
         args.push("-metadata".into());
         args.push(format!("album={artist}"));
+    }
+    if let Some(metadata) = metadata {
+        for (key, value) in [
+            ("title", Some(metadata.title.as_str())),
+            ("artist", Some(metadata.artist.as_str())),
+            ("album", metadata.album.as_deref()),
+        ] {
+            if let Some(value) = value {
+                args.push("-metadata".into());
+                args.push(format!("{key}={value}"));
+            }
+        }
     }
     let temp = outbox.join(temp_name());
     args.extend([

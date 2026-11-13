@@ -2,9 +2,11 @@
 //! the UI and from worker threads. Nothing polls.
 
 use crate::card::{CardInfo, Udisks};
+use crate::musicbrainz::Recording;
 use crate::paths::{Config, Dirs, State, now_secs, read_json, read_json_checked, write_json};
 use crate::proc::{self, Cancel};
 use crate::queue::{self, Job, Stage};
+use crate::slskd::{PeerFile, Slskd, Transfer, TransferStatus};
 use crate::tools::{self, Resolved, Staged, Tool};
 use crate::ytdlp::{self, Found, Line};
 use crate::{fixer, net, notify, selfupdate, transfer};
@@ -61,6 +63,10 @@ pub enum UiEvent {
     SponsorBlock(bool),
     Tools(String),
     Updated(String),
+    SoulseekStatus { ready: bool, text: String },
+    PeerResults(Vec<PeerFile>),
+    PeerError(String),
+    PeerSearching(bool),
 }
 
 pub type Emit = Arc<dyn Fn(UiEvent) + Send + Sync>;
@@ -72,6 +78,16 @@ enum Msg {
     ClearFinished,
     Eject,
     SetSponsorBlock(bool),
+    SoulseekLogin(String, String),
+    SoulseekStarted(Result<Arc<Slskd>, String>),
+    SearchPeers(Recording),
+    PeersFound(u64, Result<Vec<PeerFile>, String>),
+    DownloadPeer(usize),
+    SoulseekQueued {
+        id: u64,
+        generation: u64,
+        transfer: Transfer,
+    },
     Discovered {
         id: u64,
         generation: u64,
@@ -135,6 +151,15 @@ impl Engine {
     pub fn set_sponsorblock(&self, on: bool) {
         let _ = self.tx.send(Msg::SetSponsorBlock(on));
     }
+    pub fn soulseek_login(&self, username: String, password: String) {
+        let _ = self.tx.send(Msg::SoulseekLogin(username, password));
+    }
+    pub fn search_peers(&self, recording: Recording) {
+        let _ = self.tx.send(Msg::SearchPeers(recording));
+    }
+    pub fn download_peer(&self, index: usize) {
+        let _ = self.tx.send(Msg::DownloadPeer(index));
+    }
     /// Stops running downloads and saves the queue. Waits briefly for that.
     pub fn shutdown(&self) {
         let (ack, done) = channel();
@@ -182,6 +207,11 @@ struct Core {
     last_waiting: Option<usize>,
     last_card: Option<CardView>,
     last_tools: String,
+    soulseek: Option<Arc<Slskd>>,
+    soulseek_starting: bool,
+    selected_recording: Option<Recording>,
+    peer_results: Vec<PeerFile>,
+    peer_generation: u64,
 }
 
 /// What the coordinator listens to besides the UI.
@@ -260,6 +290,11 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         last_waiting: None,
         last_card: None,
         last_tools: String::new(),
+        soulseek: None,
+        soulseek_starting: false,
+        selected_recording: None,
+        peer_results: Vec::new(),
+        peer_generation: 0,
         dirs: dirs.clone(),
     };
 
@@ -485,6 +520,135 @@ impl Core {
 
     fn handle(&mut self, msg: Msg) {
         match msg {
+            Msg::SoulseekLogin(username, password) => {
+                if self.soulseek_starting || self.soulseek.is_some() {
+                    return;
+                }
+                self.soulseek_starting = true;
+                (self.emit)(UiEvent::SoulseekStatus {
+                    ready: false,
+                    text: "Connecting to Soulseek".into(),
+                });
+                let tx = self.tx.clone();
+                let dirs = self.dirs.clone();
+                spawn("soulseek-start", move || {
+                    let root = dirs.tools.join("slskd");
+                    let result = (|| {
+                        let installed = match crate::slskd_tools::find(&root) {
+                            Some(found) => found,
+                            None => {
+                                let agent = net::agent();
+                                let release = crate::slskd_tools::fetch_latest(&agent)?;
+                                crate::slskd_tools::install(&agent, &release, &root)?
+                            }
+                        };
+                        Slskd::start(
+                            &installed.executable,
+                            &dirs.data.join("slskd"),
+                            &username,
+                            &password,
+                        )
+                        .map(Arc::new)
+                    })();
+                    match result {
+                        Ok(client) => {
+                            if tx.send(Msg::SoulseekStarted(Ok(client.clone()))).is_err() {
+                                client.stop();
+                            }
+                            client.wait_for_stop();
+                        }
+                        Err(error) => {
+                            let _ = tx.send(Msg::SoulseekStarted(Err(error)));
+                        }
+                    }
+                });
+            }
+            Msg::SoulseekStarted(result) => {
+                self.soulseek_starting = false;
+                if self.stopping {
+                    if let Ok(client) = result {
+                        client.stop();
+                    }
+                    return;
+                }
+                match result {
+                    Ok(client) => {
+                        self.soulseek = Some(client);
+                        (self.emit)(UiEvent::SoulseekStatus {
+                            ready: true,
+                            text: "Connected to Soulseek".into(),
+                        });
+                    }
+                    Err(text) => (self.emit)(UiEvent::SoulseekStatus { ready: false, text }),
+                }
+            }
+            Msg::SearchPeers(recording) => {
+                self.peer_generation += 1;
+                let generation = self.peer_generation;
+                self.peer_results.clear();
+                (self.emit)(UiEvent::PeerResults(Vec::new()));
+                (self.emit)(UiEvent::PeerError(String::new()));
+                let Some(client) = self.soulseek.clone() else {
+                    (self.emit)(UiEvent::PeerError("Sign in to Soulseek first".into()));
+                    return;
+                };
+                let query = format!("{} {}", recording.artist, recording.title);
+                self.selected_recording = Some(recording);
+                (self.emit)(UiEvent::PeerSearching(true));
+                let tx = self.tx.clone();
+                spawn("soulseek-search", move || {
+                    let _ = tx.send(Msg::PeersFound(generation, client.search(&query)));
+                });
+            }
+            Msg::PeersFound(generation, result) if generation == self.peer_generation => {
+                (self.emit)(UiEvent::PeerSearching(false));
+                match result {
+                    Ok(files) => {
+                        self.peer_results = files;
+                        (self.emit)(UiEvent::PeerResults(self.peer_results.clone()));
+                    }
+                    Err(error) => (self.emit)(UiEvent::PeerError(error)),
+                }
+            }
+            Msg::PeersFound(..) => {}
+            Msg::DownloadPeer(index) => {
+                if let (Some(peer), Some(recording)) = (
+                    self.peer_results.get(index).cloned(),
+                    self.selected_recording.clone(),
+                ) {
+                    let mut job = Job::new(self.next_id, String::new());
+                    self.next_id += 1;
+                    job.title = format!("{} - {}", recording.artist, recording.title);
+                    job.found = true;
+                    job.stage = Stage::Waiting;
+                    job.metadata = Some(fixer::Metadata {
+                        title: recording.title,
+                        artist: recording.artist,
+                        album: recording.release,
+                    });
+                    job.soulseek = Some(queue::SoulseekJob {
+                        peer,
+                        transfer: None,
+                    });
+                    self.jobs.push(job);
+                    self.show_all();
+                }
+            }
+            Msg::SoulseekQueued {
+                id,
+                generation,
+                transfer,
+            } => {
+                if let Some(job) = self
+                    .jobs
+                    .iter_mut()
+                    .find(|job| current_attempt(job, id, generation, Stage::Downloading))
+                    && let Some(source) = job.soulseek.as_mut()
+                {
+                    source.transfer = Some(transfer);
+                    self.dirty = true;
+                }
+            }
             Msg::AddLinks(links) => {
                 for url in links {
                     let job = Job::new(self.next_id, url);
@@ -496,6 +660,9 @@ impl Core {
             Msg::Cancel(id) => self.cancel(id),
             Msg::Retry(id) => {
                 if let Some(job) = self.job_mut(id).filter(|j| j.can_retry()) {
+                    if let Some(source) = job.soulseek.as_mut() {
+                        source.transfer = None;
+                    }
                     job.generation += 1;
                     job.stage = job.retry_stage();
                     job.reason.clear();
@@ -650,6 +817,9 @@ impl Core {
                 for cancel in self.cancels.values() {
                     cancel.cancel();
                 }
+                if let Some(client) = self.soulseek.take() {
+                    client.stop();
+                }
                 self.dirty = true;
                 self.flush();
                 let _ = ack.send(());
@@ -743,6 +913,7 @@ impl Core {
 
     fn fixed(&mut self, id: u64, result: Result<PathBuf, String>) {
         self.cancels.remove(&id);
+        let downloads = self.dirs.data.join("slskd/downloads");
         let Some(job) = self.job_mut(id).filter(|j| j.stage == Stage::Fixing) else {
             // Canceled while fixing: the result must not reach the card.
             if let Ok(file) = result {
@@ -753,6 +924,9 @@ impl Core {
         job.running = false;
         match result {
             Ok(outbox_file) => {
+                if let Some(transfer) = job.soulseek.as_ref().and_then(|s| s.transfer.as_ref()) {
+                    cleanup_soulseek_download(&downloads, transfer);
+                }
                 job.stage = Stage::WaitingCard;
                 job.outbox_file = Some(outbox_file);
                 if let Some(file) = job.downloaded.take()
@@ -1051,6 +1225,37 @@ impl Core {
                     });
                 }
                 Stage::Waiting if downloading < MAX_DOWNLOADS => {
+                    if let Some(source) = self.jobs[i].soulseek.clone() {
+                        let Some(client) = self.soulseek.clone() else {
+                            continue;
+                        };
+                        downloading += 1;
+                        self.jobs[i].stage = Stage::Downloading;
+                        self.jobs[i].fraction = None;
+                        self.jobs[i].speed = None;
+                        let dir = self.dirs.downloads.join(format!("{id}-{generation}"));
+                        let worker_cancel = cancel.clone();
+                        spawn("soulseek-download", move || {
+                            let result = soulseek_download(
+                                &client,
+                                &source,
+                                &dir,
+                                id,
+                                generation,
+                                &worker_cancel,
+                                &tx,
+                            );
+                            let _ = tx.send(Msg::Downloaded {
+                                id,
+                                generation,
+                                result,
+                            });
+                        });
+                        self.jobs[i].running = true;
+                        self.cancels.insert(id, cancel);
+                        changed = true;
+                        continue;
+                    }
                     downloading += 1;
                     self.jobs[i].stage = Stage::Downloading;
                     self.jobs[i].fraction = None;
@@ -1087,8 +1292,10 @@ impl Core {
                         continue;
                     };
                     let (ffmpeg, outbox) = (ffmpeg.clone(), self.dirs.outbox.clone());
+                    let metadata = self.jobs[i].metadata.clone();
                     spawn("fix", move || {
-                        let result = fixer::fix(&ffmpeg, &file, &outbox);
+                        let result =
+                            fixer::fix_with_metadata(&ffmpeg, &file, &outbox, metadata.as_ref());
                         let _ = tx.send(Msg::Fixed {
                             id,
                             generation,
@@ -1109,6 +1316,94 @@ impl Core {
 }
 
 // Workers ------------------------------------------------------------------
+
+fn cleanup_soulseek_download(root: &Path, transfer: &Transfer) {
+    if transfer.destination.len() != 48
+        || !transfer.destination.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return;
+    }
+    let dir = root.join(&transfer.destination);
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
+    let files: Vec<_> = entries.flatten().collect();
+    if files.len() != 1 {
+        return;
+    }
+    let file = &files[0];
+    if file.file_type().is_ok_and(|t| t.is_file())
+        && file.metadata().is_ok_and(|m| m.len() == transfer.size)
+        && fs::remove_file(file.path()).is_ok()
+    {
+        let _ = fs::remove_dir(dir);
+    }
+}
+
+fn soulseek_download(
+    client: &Slskd,
+    source: &queue::SoulseekJob,
+    dir: &Path,
+    id: u64,
+    generation: u64,
+    cancel: &Cancel,
+    tx: &Sender<Msg>,
+) -> Result<PathBuf, String> {
+    let transfer = match &source.transfer {
+        Some(transfer) => transfer.clone(),
+        None => {
+            let transfer = client.enqueue(&source.peer)?;
+            let _ = tx.send(Msg::SoulseekQueued {
+                id,
+                generation,
+                transfer: transfer.clone(),
+            });
+            transfer
+        }
+    };
+    let mut finishing_since = None;
+    loop {
+        if cancel.is_cancelled() {
+            let _ = client.cancel(&transfer);
+            return Err("Canceled".into());
+        }
+        match client.transfer(&transfer)? {
+            TransferStatus::Failed(reason) => return Err(reason),
+            TransferStatus::Active { progress } => {
+                if progress >= 1.0 {
+                    let since = finishing_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() > Duration::from_secs(60) {
+                        return Err("Downloaded file did not arrive".into());
+                    }
+                } else {
+                    finishing_since = None;
+                }
+                let _ = tx.send(Msg::Progress {
+                    id,
+                    generation,
+                    fraction: Some(progress.clamp(0.0, 1.0)),
+                    speed: None,
+                    processing: false,
+                });
+            }
+            TransferStatus::Complete(source) => {
+                fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+                let name = source.file_name().ok_or("Downloaded file has no name")?;
+                let target = dir.join(name);
+                let bytes =
+                    fs::copy(&source, &target).map_err(|e| format!("Copy downloaded file: {e}"))?;
+                if bytes != source.metadata().map_err(|e| e.to_string())?.len() {
+                    return Err("Downloaded file changed while copying".into());
+                }
+                fs::File::open(&target)
+                    .and_then(|f| f.sync_all())
+                    .map_err(|e| e.to_string())?;
+                return Ok(target);
+            }
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
 
 fn discover(ytdlp: &Path, deno: &Path, url: &str, cancel: &Cancel) -> Result<Found, String> {
     let args = ytdlp::discovery_args(url, Some(deno));
@@ -1249,6 +1544,23 @@ fn spawn_updater(tx: Sender<Msg>, dirs: Dirs, resolved: Resolved, appimage: Opti
                 Err(e) => eprintln!("sansa-dl: {} update: {e}", tool.key()),
             }
         }
+        let slskd_root = dirs.tools.join("slskd");
+        if let Some(installed) = crate::slskd_tools::find(&slskd_root)
+            && state.due("slskd", now_secs())
+        {
+            state.checked.insert("slskd".into(), now_secs());
+            let _ = write_json(&dirs.state_file, &state);
+            let update = crate::slskd_tools::fetch_latest(&agent).and_then(|latest| {
+                if tools::is_newer(&latest.version, &installed.version) {
+                    crate::slskd_tools::install(&agent, &latest, &slskd_root).map(|_| ())
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(error) = update {
+                eprintln!("sansa-dl: slskd update: {error}");
+            }
+        }
         if let Some(appimage) = appimage {
             let now = now_secs();
             if state.due("app", now) {
@@ -1269,6 +1581,26 @@ fn spawn_updater(tx: Sender<Msg>, dirs: Dirs, resolved: Resolved, appimage: Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_only_removes_the_completed_soulseek_file() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = "a".repeat(48);
+        let dir = root.path().join(&destination);
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("track"), b"audio").unwrap();
+        let mut transfer = Transfer {
+            id: "id".into(),
+            username: "peer".into(),
+            destination,
+            size: 4,
+        };
+        cleanup_soulseek_download(root.path(), &transfer);
+        assert!(dir.exists());
+        transfer.size = 5;
+        cleanup_soulseek_download(root.path(), &transfer);
+        assert!(!dir.exists());
+    }
 
     #[test]
     fn stale_attempt_does_not_match_current_job() {

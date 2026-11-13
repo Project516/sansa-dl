@@ -30,6 +30,10 @@ pub struct Job {
     pub reason: String,
     pub downloaded: Option<PathBuf>,
     pub outbox_file: Option<PathBuf>,
+    #[serde(default)]
+    pub metadata: Option<crate::fixer::Metadata>,
+    #[serde(default)]
+    pub soulseek: Option<SoulseekJob>,
     #[serde(skip)]
     pub running: bool,
     #[serde(skip)]
@@ -54,6 +58,8 @@ impl Job {
             reason: String::new(),
             downloaded: None,
             outbox_file: None,
+            metadata: None,
+            soulseek: None,
             running: false,
             generation: 0,
             fraction: None,
@@ -141,6 +147,12 @@ impl Job {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulseekJob {
+    pub peer: crate::slskd::PeerFile,
+    pub transfer: Option<crate::slskd::Transfer>,
+}
+
 /// http(s) links in pasted text, in order, without repeats.
 pub fn parse_links(text: &str) -> Vec<String> {
     let mut links: Vec<String> = Vec::new();
@@ -166,6 +178,12 @@ pub fn restore(mut jobs: Vec<Job>) -> Vec<Job> {
     jobs.retain(|j| !matches!(j.stage, Stage::Copied | Stage::Canceled));
     for job in &mut jobs {
         let kept_download = job.downloaded.as_ref().is_some_and(|f| f.exists());
+        if matches!(job.stage, Stage::Downloading)
+            && !kept_download
+            && let Some(source) = job.soulseek.as_mut()
+        {
+            source.transfer = None;
+        }
         job.stage = match job.stage {
             Stage::Downloading | Stage::Fixing if kept_download => Stage::Fixing,
             Stage::Downloading | Stage::Fixing => Stage::Waiting,

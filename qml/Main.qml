@@ -35,11 +35,254 @@ Kirigami.ApplicationWindow {
         field.forceActiveFocus();
     }
 
+    function duration(ms) {
+        const seconds = Math.floor(ms / 1000);
+        return Math.floor(seconds / 60) + ":" + ("0" + seconds % 60).slice(-2);
+    }
+
+    Controls.Dialog {
+        id: musicDialog
+        parent: Controls.Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(root.width - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 32)
+        height: Math.min(root.height - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 26)
+        modal: true
+        title: "Find music"
+        standardButtons: Controls.Dialog.Close
+        property bool searched: false
+
+        function search() {
+            searched = musicQuery.text.trim() !== "";
+            backend.searchMusic(musicQuery.text);
+        }
+
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+            RowLayout {
+                Layout.fillWidth: true
+                Controls.TextField {
+                    id: musicQuery
+                    Layout.fillWidth: true
+                    placeholderText: "Artist or song"
+                    Accessible.name: "Artist or song"
+                    onAccepted: musicDialog.search()
+                }
+                Controls.Button {
+                    text: "Search"
+                    icon.name: "search"
+                    enabled: musicQuery.text.trim() !== ""
+                    onClicked: musicDialog.search()
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Controls.Label {
+                    Layout.fillWidth: true
+                    text: backend.soulseekStatus === "" ? "Sign in to Soulseek to download" : backend.soulseekStatus
+                    textFormat: Text.PlainText
+                    elide: Text.ElideRight
+                }
+                Controls.Button {
+                    text: backend.soulseekReady ? "Connected" : "Sign in"
+                    enabled: !backend.soulseekReady
+                    onClicked: loginDialog.open()
+                }
+            }
+            Kirigami.InlineMessage {
+                Layout.fillWidth: true
+                visible: backend.searchError !== ""
+                text: backend.searchError
+                type: Kirigami.MessageType.Error
+            }
+            Controls.BusyIndicator {
+                Layout.alignment: Qt.AlignHCenter
+                running: backend.searching
+                visible: running
+            }
+            ListView {
+                id: musicResults
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                currentIndex: -1
+                model: backend.searchResults === "" ? [] : JSON.parse(backend.searchResults)
+                delegate: Controls.ItemDelegate {
+                    required property var modelData
+                    required property int index
+                    width: ListView.view.width
+                    highlighted: ListView.isCurrentItem
+                    onClicked: musicResults.currentIndex = index
+                    contentItem: ColumnLayout {
+                        Controls.Label {
+                            Layout.fillWidth: true
+                            text: modelData.title
+                            textFormat: Text.PlainText
+                            elide: Text.ElideRight
+                        }
+                        Controls.Label {
+                            Layout.fillWidth: true
+                            text: modelData.artist + (modelData.release ? " · " + modelData.release : "") + (modelData.length ? " · " + root.duration(modelData.length) : "")
+                            textFormat: Text.PlainText
+                            elide: Text.ElideRight
+                            color: Kirigami.Theme.disabledTextColor
+                        }
+                    }
+                }
+                Kirigami.PlaceholderMessage {
+                    anchors.centerIn: parent
+                    width: parent.width
+                    visible: !backend.searching && backend.searchError === "" && musicResults.count === 0
+                    text: musicDialog.searched ? "No recordings found" : "Search MusicBrainz for a song"
+                }
+            }
+            Controls.Button {
+                Layout.alignment: Qt.AlignRight
+                text: "Find downloads"
+                enabled: backend.soulseekReady && musicResults.currentIndex >= 0 && !backend.searching
+                onClicked: {
+                    const selected = musicResults.model[musicResults.currentIndex];
+                    peerDialog.trackTitle = selected.artist + " · " + selected.title;
+                    backend.findPeers(musicResults.currentIndex);
+                    peerDialog.open();
+                }
+            }
+        }
+        Connections {
+            target: backend
+            function onSearchResultsChanged() { musicResults.currentIndex = -1; }
+        }
+        onOpened: musicQuery.forceActiveFocus()
+    }
+
+    Controls.Dialog {
+        id: loginDialog
+        parent: Controls.Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(root.width - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 24)
+        modal: true
+        title: "Sign in to Soulseek"
+        standardButtons: Controls.Dialog.Ok | Controls.Dialog.Cancel
+
+        contentItem: ColumnLayout {
+            Controls.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: "Credentials are kept for this session."
+            }
+            Controls.TextField {
+                id: soulseekUser
+                Layout.fillWidth: true
+                placeholderText: "Username"
+                Accessible.name: "Soulseek username"
+            }
+            Controls.TextField {
+                id: soulseekPassword
+                Layout.fillWidth: true
+                placeholderText: "Password"
+                Accessible.name: "Soulseek password"
+                echoMode: TextInput.Password
+            }
+        }
+        onOpened: soulseekUser.forceActiveFocus()
+        onAccepted: {
+            backend.soulseekLogin(soulseekUser.text, soulseekPassword.text);
+            soulseekPassword.clear();
+        }
+        onRejected: soulseekPassword.clear()
+    }
+
+    Controls.Dialog {
+        id: peerDialog
+        parent: Controls.Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(root.width - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 32)
+        height: Math.min(root.height - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 26)
+        modal: true
+        title: "Choose a download"
+        standardButtons: Controls.Dialog.Close
+        property string trackTitle: ""
+
+        contentItem: ColumnLayout {
+            Controls.Label {
+                Layout.fillWidth: true
+                text: peerDialog.trackTitle
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+            }
+            Kirigami.InlineMessage {
+                Layout.fillWidth: true
+                visible: backend.peerError !== ""
+                text: backend.peerError
+                type: Kirigami.MessageType.Error
+            }
+            Controls.BusyIndicator {
+                Layout.alignment: Qt.AlignHCenter
+                running: backend.peerSearching
+                visible: running
+            }
+            ListView {
+                id: peerResults
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                currentIndex: -1
+                model: backend.peerResults === "" ? [] : JSON.parse(backend.peerResults)
+                delegate: Controls.ItemDelegate {
+                    required property var modelData
+                    required property int index
+                    width: ListView.view.width
+                    highlighted: ListView.isCurrentItem
+                    onClicked: peerResults.currentIndex = index
+                    contentItem: ColumnLayout {
+                        Controls.Label {
+                            Layout.fillWidth: true
+                            text: modelData.filename
+                            textFormat: Text.PlainText
+                            elide: Text.ElideLeft
+                        }
+                        Controls.Label {
+                            Layout.fillWidth: true
+                            text: modelData.username + " · " + (modelData.size / 1000000).toFixed(1) + " MB" + (modelData.bitrate ? " · " + modelData.bitrate + " kbps" : "") + (modelData.length ? " · " + root.duration(modelData.length * 1000) : "")
+                            textFormat: Text.PlainText
+                            elide: Text.ElideRight
+                            color: Kirigami.Theme.disabledTextColor
+                        }
+                    }
+                }
+                Kirigami.PlaceholderMessage {
+                    anchors.centerIn: parent
+                    width: parent.width
+                    visible: !backend.peerSearching && backend.peerError === "" && peerResults.count === 0
+                    text: "No downloads found"
+                }
+            }
+            Controls.Button {
+                Layout.alignment: Qt.AlignRight
+                text: "Download"
+                enabled: !backend.peerSearching && peerResults.currentIndex >= 0
+                onClicked: {
+                    backend.downloadPeer(peerResults.currentIndex);
+                    peerDialog.close();
+                    musicDialog.close();
+                }
+            }
+        }
+        Connections {
+            target: backend
+            function onPeerResultsChanged() { peerResults.currentIndex = -1; }
+        }
+    }
+
     pageStack.initialPage: Kirigami.ScrollablePage {
         id: page
         title: "Downloads"
 
         actions: [
+            Kirigami.Action {
+                text: "Find music"
+                icon.name: "search"
+                onTriggered: musicDialog.open()
+            },
             // Always shown as a switch, so it never becomes an overflow menu item.
             Kirigami.Action {
                 displayHint: Kirigami.DisplayHint.KeepVisible
