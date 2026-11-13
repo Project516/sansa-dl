@@ -78,14 +78,14 @@ Kirigami.ApplicationWindow {
                 Layout.fillWidth: true
                 Controls.Label {
                     Layout.fillWidth: true
-                    text: backend.soulseekStatus === "" ? "Sign in to Soulseek to download" : backend.soulseekStatus
+                    text: backend.soulseekStatus === "" ? "Not connected to Soulseek" : backend.soulseekStatus
                     textFormat: Text.PlainText
                     elide: Text.ElideRight
                 }
                 Controls.Button {
-                    text: backend.soulseekReady ? "Connected" : "Sign in"
+                    text: backend.soulseekReady ? "Connected" : "Connect"
                     enabled: !backend.soulseekReady
-                    onClicked: loginDialog.open()
+                    onClicked: backend.soulseekConnect()
                 }
             }
             Kirigami.InlineMessage {
@@ -151,44 +151,10 @@ Kirigami.ApplicationWindow {
             target: backend
             function onSearchResultsChanged() { musicResults.currentIndex = -1; }
         }
-        onOpened: musicQuery.forceActiveFocus()
-    }
-
-    Controls.Dialog {
-        id: loginDialog
-        parent: Controls.Overlay.overlay
-        anchors.centerIn: parent
-        width: Math.min(root.width - Kirigami.Units.gridUnit * 2, Kirigami.Units.gridUnit * 24)
-        modal: true
-        title: "Sign in to Soulseek"
-        standardButtons: Controls.Dialog.Ok | Controls.Dialog.Cancel
-
-        contentItem: ColumnLayout {
-            Controls.Label {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: "Credentials are kept for this session."
-            }
-            Controls.TextField {
-                id: soulseekUser
-                Layout.fillWidth: true
-                placeholderText: "Username"
-                Accessible.name: "Soulseek username"
-            }
-            Controls.TextField {
-                id: soulseekPassword
-                Layout.fillWidth: true
-                placeholderText: "Password"
-                Accessible.name: "Soulseek password"
-                echoMode: TextInput.Password
-            }
+        onOpened: {
+            musicQuery.forceActiveFocus();
+            backend.soulseekConnect();
         }
-        onOpened: soulseekUser.forceActiveFocus()
-        onAccepted: {
-            backend.soulseekLogin(soulseekUser.text, soulseekPassword.text);
-            soulseekPassword.clear();
-        }
-        onRejected: soulseekPassword.clear()
     }
 
     Controls.Dialog {

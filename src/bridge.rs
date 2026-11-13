@@ -108,7 +108,7 @@ pub mod qobject {
         fn search_music(self: Pin<&mut Backend>, query: &QString);
 
         #[qinvokable]
-        fn soulseek_login(self: &Backend, username: &QString, password: &QString);
+        fn soulseek_connect(self: &Backend);
 
         #[qinvokable]
         fn find_peers(self: Pin<&mut Backend>, index: i32);
@@ -399,9 +399,9 @@ impl qobject::Backend {
         });
     }
 
-    fn soulseek_login(&self, username: &QString, password: &QString) {
+    fn soulseek_connect(&self) {
         if let Some(engine) = self.engine() {
-            engine.soulseek_login(username.to_string(), password.to_string());
+            engine.soulseek_connect();
         }
     }
 

@@ -2,10 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read};
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -28,6 +28,44 @@ pub struct Transfer {
     pub username: String,
     pub destination: String,
     pub size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Account {
+    pub username: String,
+    pub password: String,
+}
+
+/// The saved account, or a new random one saved first. Soulseek creates an
+/// account the first time an unused name logs in.
+pub fn account(path: &Path) -> Result<Account, String> {
+    match fs::read(path) {
+        Ok(bytes) => {
+            return serde_json::from_slice(&bytes)
+                .map_err(|e| format!("Soulseek account file {}: {e}", path.display()));
+        }
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!("Soulseek account file: {e}"));
+        }
+        Err(_) => {}
+    }
+    let account = Account {
+        username: format!("sansadl{}", &random_hex()?[..10]),
+        password: random_hex()?,
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| format!("Soulseek account file: {e}"))?;
+    file.write_all(&serde_json::to_vec_pretty(&account).map_err(|e| e.to_string())?)
+        .and_then(|()| file.sync_all())
+        .map_err(|e| format!("Soulseek account file: {e}"))?;
+    Ok(account)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -453,6 +491,22 @@ mod tests {
         assert_eq!(files[0].length, Some(180));
         assert_eq!(encode(&files[0].username), "user%2Fone");
         assert!(!valid_component("../x"));
+    }
+
+    #[test]
+    fn account_is_made_once_and_kept_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/soulseek.json");
+        let made = account(&path).unwrap();
+        assert!(made.username.starts_with("sansadl") && made.username.len() == 17);
+        assert_eq!(made.password.len(), 48);
+        assert_eq!(account(&path).unwrap(), made);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::write(&path, b"not json").unwrap();
+        assert!(account(&path).is_err());
     }
 
     #[test]

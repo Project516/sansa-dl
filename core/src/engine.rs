@@ -78,7 +78,7 @@ enum Msg {
     ClearFinished,
     Eject,
     SetSponsorBlock(bool),
-    SoulseekLogin(String, String),
+    SoulseekConnect,
     SoulseekStarted(Result<Arc<Slskd>, String>),
     SoulseekExited(Arc<Slskd>),
     SearchPeers(Recording),
@@ -152,8 +152,8 @@ impl Engine {
     pub fn set_sponsorblock(&self, on: bool) {
         let _ = self.tx.send(Msg::SetSponsorBlock(on));
     }
-    pub fn soulseek_login(&self, username: String, password: String) {
-        let _ = self.tx.send(Msg::SoulseekLogin(username, password));
+    pub fn soulseek_connect(&self) {
+        let _ = self.tx.send(Msg::SoulseekConnect);
     }
     pub fn search_peers(&self, recording: Recording) {
         let _ = self.tx.send(Msg::SearchPeers(recording));
@@ -298,6 +298,15 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         peer_generation: 0,
         dirs: dirs.clone(),
     };
+
+    // Queued Soulseek downloads resume once slskd is connected.
+    if core
+        .jobs
+        .iter()
+        .any(|job| job.soulseek.is_some() && job.stage == Stage::Waiting)
+    {
+        let _ = tx.send(Msg::SoulseekConnect);
+    }
 
     if options.card {
         let (connected, changed) = (tx.clone(), tx.clone());
@@ -521,7 +530,7 @@ impl Core {
 
     fn handle(&mut self, msg: Msg) {
         match msg {
-            Msg::SoulseekLogin(username, password) => {
+            Msg::SoulseekConnect => {
                 if self.soulseek_starting || self.soulseek.is_some() {
                     return;
                 }
@@ -542,6 +551,7 @@ impl Core {
                     let root = dirs.tools.join("slskd");
                     clean_soulseek_files(&dirs.data.join("slskd"), &keep);
                     let result = (|| {
+                        let account = crate::slskd::account(&dirs.soulseek_file)?;
                         let installed = match crate::slskd_tools::find(&root) {
                             Some(found) => found,
                             None => {
@@ -554,8 +564,8 @@ impl Core {
                         Slskd::start(
                             &installed.executable,
                             &dirs.data.join("slskd"),
-                            &username,
-                            &password,
+                            &account.username,
+                            &account.password,
                         )
                         .map(Arc::new)
                     })();
@@ -603,11 +613,11 @@ impl Core {
                     self.peer_generation += 1;
                     (self.emit)(UiEvent::PeerSearching(false));
                     (self.emit)(UiEvent::PeerError(
-                        "Soulseek disconnected. Sign in again.".into(),
+                        "Soulseek disconnected. Press Connect to try again.".into(),
                     ));
                     (self.emit)(UiEvent::SoulseekStatus {
                         ready: false,
-                        text: "Soulseek disconnected. Sign in again.".into(),
+                        text: "Soulseek disconnected. Press Connect to try again.".into(),
                     });
                 }
             }
@@ -619,7 +629,7 @@ impl Core {
                 (self.emit)(UiEvent::PeerError(String::new()));
                 let Some(client) = self.soulseek.clone() else {
                     (self.emit)(UiEvent::PeerSearching(false));
-                    (self.emit)(UiEvent::PeerError("Sign in to Soulseek first".into()));
+                    (self.emit)(UiEvent::PeerError("Connect to Soulseek first".into()));
                     return;
                 };
                 let query = format!("{} {}", recording.artist, recording.title);
