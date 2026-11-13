@@ -206,6 +206,8 @@ struct Core {
     tools: Resolved,
     staged: Vec<Staged>,
     appimage: Option<PathBuf>,
+    /// The version on disk, newer than the running one after an update.
+    app_version: String,
     updating: bool,
     manual_update: bool,
     check_again: bool,
@@ -293,6 +295,7 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         tools: resolved.clone(),
         staged: Vec::new(),
         appimage: appimage.clone(),
+        app_version: selfupdate::CURRENT.into(),
         updating: options.updates,
         manual_update: false,
         check_again: false,
@@ -343,7 +346,15 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         );
     }
     if options.updates {
-        spawn_updater(tx, dirs, resolved, appimage, Vec::new(), false);
+        spawn_updater(
+            tx,
+            dirs,
+            resolved,
+            appimage,
+            selfupdate::CURRENT.into(),
+            Vec::new(),
+            false,
+        );
     }
 
     std::thread::Builder::new()
@@ -873,7 +884,10 @@ impl Core {
             }
             Msg::Eject => self.eject(),
             Msg::ToolStaged(staged) => self.staged.push(staged),
-            Msg::AppUpdated(version) => (self.emit)(UiEvent::Updated(version)),
+            Msg::AppUpdated(version) => {
+                self.app_version.clone_from(&version);
+                (self.emit)(UiEvent::Updated(version));
+            }
             Msg::CheckUpdates => {
                 self.manual_update = true;
                 (self.emit)(UiEvent::UpdateCheck {
@@ -1247,6 +1261,7 @@ impl Core {
             self.dirs.clone(),
             self.tools.clone(),
             self.appimage.clone(),
+            self.app_version.clone(),
             // Their stage folder is still waiting to be installed.
             self.staged.iter().map(|s| s.tool.key()).collect(),
             true,
@@ -1666,6 +1681,7 @@ fn spawn_updater(
     dirs: Dirs,
     resolved: Resolved,
     appimage: Option<PathBuf>,
+    app_version: String,
     staged: Vec<&'static str>,
     force: bool,
 ) {
@@ -1735,7 +1751,7 @@ fn spawn_updater(
         if let Some(appimage) = appimage {
             let now = now_secs();
             if force || state.due("app", now) {
-                let result = selfupdate::update(&agent, &appimage, selfupdate::CURRENT, &|v| {
+                let result = selfupdate::update(&agent, &appimage, &app_version, &|v| {
                     note(format!("Downloading Sansa DL {v}"))
                 });
                 // Saved after the attempt, so quitting mid-download retries next launch.
