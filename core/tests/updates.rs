@@ -81,8 +81,14 @@ fn a_newer_release_replaces_the_appimage() {
     let app = dir.path().join("sansa-dl.AppImage");
     fs::write(&app, b"old").unwrap();
 
-    let updated =
-        selfupdate::update_from(&net::agent(), &format!("{base}/release"), &app, "0.1.9").unwrap();
+    let updated = selfupdate::update_from(
+        &net::agent(),
+        &format!("{base}/release"),
+        &app,
+        "0.1.9",
+        &|_| {},
+    )
+    .unwrap();
 
     assert_eq!(updated.as_deref(), Some("0.2.5"));
     assert_eq!(fs::read(&app).unwrap(), NEW_APP);
@@ -103,8 +109,14 @@ fn the_current_release_changes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let app = dir.path().join("sansa-dl.AppImage");
     fs::write(&app, b"old").unwrap();
-    let updated =
-        selfupdate::update_from(&net::agent(), &format!("{base}/release"), &app, "0.1.9").unwrap();
+    let updated = selfupdate::update_from(
+        &net::agent(),
+        &format!("{base}/release"),
+        &app,
+        "0.1.9",
+        &|_| {},
+    )
+    .unwrap();
     assert_eq!(updated, None);
     assert_eq!(fs::read(&app).unwrap(), b"old");
 }
@@ -115,8 +127,14 @@ fn a_bad_checksum_keeps_the_old_appimage() {
     let dir = tempfile::tempdir().unwrap();
     let app = dir.path().join("sansa-dl.AppImage");
     fs::write(&app, b"old").unwrap();
-    let err = selfupdate::update_from(&net::agent(), &format!("{base}/release"), &app, "0.1.9")
-        .unwrap_err();
+    let err = selfupdate::update_from(
+        &net::agent(),
+        &format!("{base}/release"),
+        &app,
+        "0.1.9",
+        &|_| {},
+    )
+    .unwrap_err();
     assert!(err.contains("checksum"));
     assert_eq!(fs::read(&app).unwrap(), b"old");
     assert_eq!(files_in(dir.path()), ["sansa-dl.AppImage"]);

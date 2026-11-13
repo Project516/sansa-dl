@@ -12,6 +12,8 @@ pub fn agent() -> ureq::Agent {
         .timeout_connect(Some(Duration::from_secs(20)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
         .timeout_recv_body(Some(Duration::from_secs(30 * 60)))
+        // A stalled connection otherwise holds the update check for the full body timeout.
+        .timeout_per_read(Some(Duration::from_secs(60)))
         .build()
         .into()
 }
