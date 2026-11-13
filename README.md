@@ -68,10 +68,6 @@ On Fedora: `dnf install gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kir
 
 The tests that make audio fixtures need an `ffmpeg` with the LAME encoder on `PATH`. They skip when it is missing. `packaging/appimage/fetch-tools.sh <dir>` downloads one.
 
-## License
-
-AGPL-3.0-only. See [LICENSE](LICENSE).
-
 ## Browser version
 
 The browser version downloads one song as an MP3 for manual transfer to the
@@ -91,3 +87,7 @@ npm run dev
 
 Run `npm run build` to create the static site in `web/dist/`. Conversion runs in
 the browser and may take time and memory for long recordings.
+
+## License
+
+AGPL-3.0-only. See [LICENSE](LICENSE).
