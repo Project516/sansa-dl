@@ -69,10 +69,17 @@ impl Slskd {
         fs::create_dir_all(data_dir).map_err(|e| format!("slskd directory: {e}"))?;
         fs::set_permissions(data_dir, fs::Permissions::from_mode(0o700))
             .map_err(|e| e.to_string())?;
-        let port = TcpListener::bind("127.0.0.1:0")
-            .and_then(|s| s.local_addr())
-            .map_err(|e| e.to_string())?
-            .port();
+        // The app keeps the queue. slskd's own records would make it resume old transfers
+        // outside their folders, and its volatile mode loses tables between connections.
+        match fs::remove_dir_all(data_dir.join("data")) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("slskd data: {e}"));
+            }
+            _ => {}
+        }
+        let port = free_port("127.0.0.1:0")?;
+        // Another Soulseek client may hold slskd's default listen port.
+        let listen_port = free_port("0.0.0.0:0")?;
         let key = random_hex()?;
         let mut command = Command::new(executable);
         for (name, _) in std::env::vars_os() {
@@ -94,11 +101,10 @@ impl Slskd {
             .env("SLSKD_SLSK_PASSWORD", password)
             .env("SLSKD_HTTP_IP_ADDRESS", "127.0.0.1")
             .env("SLSKD_HTTP_PORT", port.to_string())
+            .env("SLSKD_SLSK_LISTEN_PORT", listen_port.to_string())
             .env("SLSKD_NO_HTTPS", "true")
             .env("SLSKD_API_KEY", &key)
             .env("SLSKD_NO_VERSION_CHECK", "true")
-            // The app keeps the queue; a persisted slskd would resume transfers on its own.
-            .env("SLSKD_VOLATILE", "true")
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -204,10 +210,11 @@ impl Slskd {
         {
             return Err("slskd search handshake failed".into());
         }
+        // slskd documents searchTimeout in seconds, but Soulseek.NET reads it as milliseconds.
         let search = self.request(
             "POST",
             "/api/v0/searches",
-            Some(json!({"searchText": query, "searchTimeout": 10, "responseLimit": 50})),
+            Some(json!({"searchText": query, "searchTimeout": 15000, "responseLimit": 50})),
         )?;
         let id = search
             .get("id")
@@ -378,6 +385,13 @@ impl Drop for Slskd {
             let _ = child.wait();
         }
     }
+}
+
+fn free_port(address: &str) -> Result<u16, String> {
+    TcpListener::bind(address)
+        .and_then(|s| s.local_addr())
+        .map(|a| a.port())
+        .map_err(|e| e.to_string())
 }
 
 fn valid_component(s: &str) -> bool {
