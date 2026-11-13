@@ -15,6 +15,7 @@ pub struct Dirs {
     pub outbox: PathBuf,
     pub tools: PathBuf,
     pub config_file: PathBuf,
+    pub soulseek_file: PathBuf,
     pub jobs_file: PathBuf,
     pub state_file: PathBuf,
 }
@@ -41,6 +42,7 @@ impl Dirs {
             outbox: data.join("outbox"),
             tools: data.join("tools"),
             config_file: config.join("config.json"),
+            soulseek_file: config.join("soulseek.json"),
             jobs_file: data.join("jobs.json"),
             state_file: data.join("state.json"),
         }

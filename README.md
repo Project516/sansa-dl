@@ -33,7 +33,7 @@ The app updates itself once a day. After an update it asks you to restart.
 
 Paste one or more links into the field and press Enter or Add. You can also drop links on the window. The field clears at once, so you can paste the next link right away.
 
-To search by artist or song, choose **Find music**, sign in with your Soulseek account, and select a recording and an available file. The app installs and updates slskd automatically. Soulseek credentials are kept only for the current session; sign in again after restarting to resume queued downloads.
+To search by artist or song, choose **Find music** and select a recording and an available file. The app installs and updates slskd automatically. The first time, it makes a Soulseek account with a random name and saves it in `~/.config/sansa-dl/soulseek.json`; put your own `username` and `password` there to use your account instead. Queued Soulseek downloads resume when the app starts.
 
 ```
 ./sansa-dl-<version>-x86_64.AppImage <link>...   add links to the running window, or start the app with them
