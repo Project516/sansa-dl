@@ -63,7 +63,15 @@ pub enum UiEvent {
     SponsorBlock(bool),
     Tools(String),
     Updated(String),
-    SoulseekStatus { ready: bool, text: String },
+    /// Update check status. `checking` is true while one runs.
+    UpdateCheck {
+        checking: bool,
+        text: String,
+    },
+    SoulseekStatus {
+        ready: bool,
+        text: String,
+    },
     PeerResults(Vec<PeerFile>),
     PeerError(String),
     PeerSearching(bool),
@@ -125,6 +133,9 @@ enum Msg {
     Ejected(Result<(), String>),
     ToolStaged(Staged),
     AppUpdated(String),
+    CheckUpdates,
+    UpdateNote(String),
+    UpdatesDone(UpdateReport),
     Shutdown(Sender<()>),
 }
 
@@ -154,6 +165,10 @@ impl Engine {
     }
     pub fn soulseek_connect(&self) {
         let _ = self.tx.send(Msg::SoulseekConnect);
+    }
+    /// Checks the app and every managed tool now, ignoring the daily limit.
+    pub fn check_updates(&self) {
+        let _ = self.tx.send(Msg::CheckUpdates);
     }
     pub fn search_peers(&self, recording: Recording) {
         let _ = self.tx.send(Msg::SearchPeers(recording));
@@ -190,6 +205,10 @@ struct Core {
     bundled: Option<PathBuf>,
     tools: Resolved,
     staged: Vec<Staged>,
+    appimage: Option<PathBuf>,
+    updating: bool,
+    manual_update: bool,
+    check_again: bool,
     cancels: HashMap<u64, Arc<Cancel>>,
     udisks: Option<Udisks>,
     card: Option<CardInfo>,
@@ -273,6 +292,10 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         bundled,
         tools: resolved.clone(),
         staged: Vec::new(),
+        appimage: appimage.clone(),
+        updating: options.updates,
+        manual_update: false,
+        check_again: false,
         cancels: HashMap::new(),
         udisks: None,
         card: None,
@@ -320,7 +343,7 @@ pub fn start_with(dirs: Dirs, appimage: Option<PathBuf>, emit: Emit, options: Op
         );
     }
     if options.updates {
-        spawn_updater(tx, dirs, resolved, appimage);
+        spawn_updater(tx, dirs, resolved, appimage, Vec::new(), false);
     }
 
     std::thread::Builder::new()
@@ -851,6 +874,38 @@ impl Core {
             Msg::Eject => self.eject(),
             Msg::ToolStaged(staged) => self.staged.push(staged),
             Msg::AppUpdated(version) => (self.emit)(UiEvent::Updated(version)),
+            Msg::CheckUpdates => {
+                self.manual_update = true;
+                (self.emit)(UiEvent::UpdateCheck {
+                    checking: true,
+                    text: "Checking for updates".into(),
+                });
+                if self.updating {
+                    self.check_again = true;
+                } else {
+                    self.check_updates();
+                }
+            }
+            Msg::UpdateNote(text) => (self.emit)(UiEvent::UpdateCheck {
+                checking: true,
+                text,
+            }),
+            Msg::UpdatesDone(report) => {
+                self.updating = false;
+                if std::mem::take(&mut self.check_again) {
+                    self.check_updates();
+                } else {
+                    let text = if std::mem::take(&mut self.manual_update) {
+                        report.summary()
+                    } else {
+                        String::new()
+                    };
+                    (self.emit)(UiEvent::UpdateCheck {
+                        checking: false,
+                        text,
+                    });
+                }
+            }
             Msg::Shutdown(ack) => {
                 self.stopping = true;
                 self.stop_transfer.store(true, Ordering::SeqCst);
@@ -1183,6 +1238,19 @@ impl Core {
 
     fn busy(&self) -> bool {
         self.jobs.iter().any(|j| j.running)
+    }
+
+    fn check_updates(&mut self) {
+        self.updating = true;
+        spawn_updater(
+            self.tx.clone(),
+            self.dirs.clone(),
+            self.tools.clone(),
+            self.appimage.clone(),
+            // Their stage folder is still waiting to be installed.
+            self.staged.iter().map(|s| s.tool.key()).collect(),
+            true,
+        );
     }
 
     fn swap_tools(&mut self) {
@@ -1560,22 +1628,59 @@ fn download(job: &DownloadJob, cancel: &Cancel, tx: &Sender<Msg>) -> Result<Path
 
 // Updates ------------------------------------------------------------------
 
-fn record_tool_check(state: &mut State, tool: Tool, now: u64) -> bool {
-    if !state.due(tool.key(), now) {
+/// Records the check and says whether it should run. `force` skips the daily limit.
+fn record_check(state: &mut State, key: &str, now: u64, force: bool) -> bool {
+    if !force && !state.due(key, now) {
         return false;
     }
-    state.checked.insert(tool.key().into(), now);
+    state.checked.insert(key.into(), now);
     true
 }
 
-fn spawn_updater(tx: Sender<Msg>, dirs: Dirs, resolved: Resolved, appimage: Option<PathBuf>) {
+/// What one update run did.
+#[derive(Debug, Default)]
+struct UpdateReport {
+    updated: Vec<String>,
+    app: bool,
+    errors: Vec<String>,
+}
+
+impl UpdateReport {
+    fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.updated.is_empty() {
+            parts.push(format!("Updated {}.", self.updated.join(", ")));
+        }
+        if !self.errors.is_empty() {
+            parts.push(format!("Could not update {}.", self.errors.join("; ")));
+        }
+        if parts.is_empty() && !self.app {
+            parts.push("Everything is up to date.".into());
+        }
+        parts.join(" ")
+    }
+}
+
+fn spawn_updater(
+    tx: Sender<Msg>,
+    dirs: Dirs,
+    resolved: Resolved,
+    appimage: Option<PathBuf>,
+    staged: Vec<&'static str>,
+    force: bool,
+) {
     spawn("updates", move || {
         let agent = net::agent();
         let mut state: State = read_json(&dirs.state_file);
+        let mut report = UpdateReport::default();
+        let note = |text: String| {
+            let _ = tx.send(Msg::UpdateNote(text));
+        };
         for tool in Tool::ALL {
             let have = resolved.version(tool).map(str::to_string);
-            let now = now_secs();
-            if !record_tool_check(&mut state, tool, now) {
+            if staged.contains(&tool.key())
+                || !record_check(&mut state, tool.key(), now_secs(), force)
+            {
                 continue;
             }
             let _ = write_json(&dirs.state_file, &state);
@@ -1584,6 +1689,7 @@ fn spawn_updater(tx: Sender<Msg>, dirs: Dirs, resolved: Resolved, appimage: Opti
                     .as_deref()
                     .is_none_or(|h| tools::is_newer(&latest.version, h))
                 {
+                    note(format!("Downloading {} {}", tool.key(), latest.version));
                     tools::stage(&agent, tool, &latest, &dirs.tools).map(Some)
                 } else {
                     Ok(None)
@@ -1591,43 +1697,64 @@ fn spawn_updater(tx: Sender<Msg>, dirs: Dirs, resolved: Resolved, appimage: Opti
             });
             match staged {
                 Ok(Some(staged)) => {
+                    report
+                        .updated
+                        .push(format!("{} to {}", tool.key(), staged.version));
                     let _ = tx.send(Msg::ToolStaged(staged));
                 }
                 Ok(None) => {}
-                Err(e) => eprintln!("sansa-dl: {} update: {e}", tool.key()),
+                Err(e) => {
+                    eprintln!("sansa-dl: {} update: {e}", tool.key());
+                    report.errors.push(format!("{}: {e}", tool.key()));
+                }
             }
         }
         let slskd_root = dirs.tools.join("slskd");
         if let Some(installed) = crate::slskd_tools::find(&slskd_root)
-            && state.due("slskd", now_secs())
+            && record_check(&mut state, "slskd", now_secs(), force)
         {
-            state.checked.insert("slskd".into(), now_secs());
             let _ = write_json(&dirs.state_file, &state);
             let update = crate::slskd_tools::fetch_latest(&agent).and_then(|latest| {
                 if tools::is_newer(&latest.version, &installed.version) {
-                    crate::slskd_tools::install(&agent, &latest, &slskd_root).map(|_| ())
+                    note(format!("Downloading slskd {}", latest.version));
+                    crate::slskd_tools::install(&agent, &latest, &slskd_root)
+                        .map(|_| Some(latest.version))
                 } else {
-                    Ok(())
+                    Ok(None)
                 }
             });
-            if let Err(error) = update {
-                eprintln!("sansa-dl: slskd update: {error}");
+            match update {
+                Ok(Some(version)) => report.updated.push(format!("slskd to {version}")),
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("sansa-dl: slskd update: {e}");
+                    report.errors.push(format!("slskd: {e}"));
+                }
             }
         }
         if let Some(appimage) = appimage {
             let now = now_secs();
-            if state.due("app", now) {
+            if force || state.due("app", now) {
+                let result = selfupdate::update(&agent, &appimage, selfupdate::CURRENT, &|v| {
+                    note(format!("Downloading Sansa DL {v}"))
+                });
+                // Saved after the attempt, so quitting mid-download retries next launch.
                 state.checked.insert("app".into(), now);
                 let _ = write_json(&dirs.state_file, &state);
-                match selfupdate::update(&agent, &appimage, selfupdate::CURRENT) {
+                match result {
                     Ok(Some(version)) => {
+                        report.app = true;
                         let _ = tx.send(Msg::AppUpdated(version));
                     }
                     Ok(None) => {}
-                    Err(e) => eprintln!("sansa-dl: app update: {e}"),
+                    Err(e) => {
+                        eprintln!("sansa-dl: app update: {e}");
+                        report.errors.push(format!("Sansa DL: {e}"));
+                    }
                 }
             }
         }
+        let _ = tx.send(Msg::UpdatesDone(report));
     });
 }
 
@@ -1648,6 +1775,20 @@ mod tests {
     }
 
     #[test]
+    fn update_summary_names_what_changed() {
+        let mut report = UpdateReport::default();
+        assert_eq!(report.summary(), "Everything is up to date.");
+        report.app = true;
+        assert_eq!(report.summary(), "");
+        report.updated.push("deno to 2.5.0".into());
+        report.errors.push("yt-dlp: offline".into());
+        assert_eq!(
+            report.summary(),
+            "Updated deno to 2.5.0. Could not update yt-dlp: offline."
+        );
+    }
+
+    #[test]
     fn stale_attempt_does_not_match_current_job() {
         let mut job = Job::new(1, "https://example.test".into());
         job.stage = Stage::Downloading;
@@ -1659,9 +1800,11 @@ mod tests {
     #[test]
     fn missing_tool_check_is_recorded_before_download() {
         let mut state = State::default();
-        assert!(record_tool_check(&mut state, Tool::Ytdlp, 100));
-        assert!(!record_tool_check(&mut state, Tool::Ytdlp, 101));
-        assert!(record_tool_check(&mut state, Tool::Ytdlp, 100 + 86400));
+        assert!(record_check(&mut state, "yt-dlp", 100, false));
+        assert!(!record_check(&mut state, "yt-dlp", 101, false));
+        assert!(record_check(&mut state, "yt-dlp", 102, true));
+        assert!(!record_check(&mut state, "yt-dlp", 103, false));
+        assert!(record_check(&mut state, "yt-dlp", 102 + 86400, false));
     }
 
     #[test]

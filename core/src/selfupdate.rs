@@ -23,8 +23,9 @@ pub fn update(
     agent: &ureq::Agent,
     appimage: &Path,
     current: &str,
+    downloading: &dyn Fn(&str),
 ) -> Result<Option<String>, String> {
-    update_from(agent, RELEASE, appimage, current)
+    update_from(agent, RELEASE, appimage, current, downloading)
 }
 
 pub fn update_from(
@@ -32,6 +33,7 @@ pub fn update_from(
     release_url: &str,
     appimage: &Path,
     current: &str,
+    downloading: &dyn Fn(&str),
 ) -> Result<Option<String>, String> {
     let release = net::get_json(agent, release_url)?;
     let version = release
@@ -43,6 +45,8 @@ pub fn update_from(
     if !tools::is_newer(&version, current) {
         return Ok(None);
     }
+    remove_parts(appimage);
+    downloading(&version);
     let name = asset_name(&version);
     let sums_name = format!("{name}.sha256");
     let (_, url, sums_url) = tools::release_assets(&release, &name, &sums_name)
@@ -55,7 +59,7 @@ pub fn update_from(
     fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut random))
         .map_err(|e| e.to_string())?;
-    let temp = appimage.with_file_name(format!(".sansa-dl-update-{}.part", net::hex(&random)));
+    let temp = appimage.with_file_name(format!("{PART}{}.part", net::hex(&random)));
     let mut created = false;
     let result = (|| {
         let got = net::download(agent, &url, &temp)?;
@@ -72,6 +76,20 @@ pub fn update_from(
     result.map(|()| Some(version))
 }
 
+const PART: &str = ".sansa-dl-update-";
+
+/// Removes downloads left by an update that was cut off.
+fn remove_parts(appimage: &Path) {
+    let Some(dir) = appimage.parent() else { return };
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(PART) && name.ends_with(".part") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +97,21 @@ mod tests {
     #[test]
     fn asset_names_follow_the_release_convention() {
         assert_eq!(asset_name("0.1.7"), "sansa-dl-0.1.7-x86_64.AppImage");
+    }
+
+    #[test]
+    fn removes_only_update_parts() {
+        let dir = std::env::temp_dir().join(format!("sansa-dl-parts-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let app = dir.join("sansa-dl.AppImage");
+        let part = dir.join(".sansa-dl-update-abc.part");
+        let other = dir.join("other.part");
+        for f in [&app, &part, &other] {
+            fs::write(f, b"x").unwrap();
+        }
+        remove_parts(&app);
+        assert!(app.exists() && other.exists() && !part.exists());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

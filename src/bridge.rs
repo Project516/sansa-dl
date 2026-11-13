@@ -34,6 +34,8 @@ pub mod qobject {
         #[qproperty(QString, tools_note)]
         #[qproperty(QString, updated_version)]
         #[qproperty(QString, restart_error)]
+        #[qproperty(QString, update_note)]
+        #[qproperty(bool, checking_updates)]
         #[qproperty(bool, has_finished)]
         #[qproperty(QString, search_results)]
         #[qproperty(QString, search_error)]
@@ -111,6 +113,9 @@ pub mod qobject {
         fn soulseek_connect(self: &Backend);
 
         #[qinvokable]
+        fn check_updates(self: &Backend);
+
+        #[qinvokable]
         fn find_peers(self: Pin<&mut Backend>, index: i32);
 
         #[qinvokable]
@@ -175,6 +180,8 @@ pub struct BackendRust {
     tools_note: QString,
     updated_version: QString,
     restart_error: QString,
+    update_note: QString,
+    checking_updates: bool,
     has_finished: bool,
     search_results: QString,
     search_error: QString,
@@ -243,6 +250,10 @@ impl qobject::Backend {
             UiEvent::Tools(text) => self.set_tools_note(QString::from(&text)),
             UiEvent::Updated(version) => {
                 self.set_updated_version(QString::from(&format!("v{version}")));
+            }
+            UiEvent::UpdateCheck { checking, text } => {
+                self.as_mut().set_checking_updates(checking);
+                self.set_update_note(QString::from(&text));
             }
             UiEvent::SoulseekStatus { ready, text } => {
                 self.as_mut().set_soulseek_ready(ready);
@@ -402,6 +413,12 @@ impl qobject::Backend {
     fn soulseek_connect(&self) {
         if let Some(engine) = self.engine() {
             engine.soulseek_connect();
+        }
+    }
+
+    fn check_updates(&self) {
+        if let Some(engine) = self.engine() {
+            engine.check_updates();
         }
     }
 

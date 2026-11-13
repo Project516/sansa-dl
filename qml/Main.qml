@@ -263,6 +263,13 @@ Kirigami.ApplicationWindow {
                 icon.name: "edit-clear-all"
                 enabled: backend.hasFinished
                 onTriggered: backend.clearFinished()
+            },
+            Kirigami.Action {
+                text: "Check for updates"
+                icon.name: "update-none"
+                displayHint: Kirigami.DisplayHint.AlwaysHide
+                enabled: !backend.checkingUpdates
+                onTriggered: backend.checkUpdates()
             }
         ]
 
@@ -334,6 +341,22 @@ Kirigami.ApplicationWindow {
                             }
                         }
                     ]
+                }
+
+                Kirigami.InlineMessage {
+                    id: updateMessage
+                    Layout.fillWidth: true
+                    // Set on change, since the close button clears `visible`.
+                    visible: false
+                    showCloseButton: !backend.checkingUpdates
+                    type: Kirigami.MessageType.Information
+                    text: backend.updateNote
+                    Connections {
+                        target: backend
+                        function onUpdateNoteChanged() {
+                            updateMessage.visible = backend.updateNote !== "";
+                        }
+                    }
                 }
 
                 Kirigami.InlineMessage {
