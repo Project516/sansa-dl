@@ -70,7 +70,10 @@ The tests that make audio fixtures need an `ffmpeg` with the LAME encoder on `PA
 
 ## Browser version
 
-The browser version downloads one song as an MP3 for manual transfer to the
+The browser version is at https://project516.dev/sansa-dl/. GitHub Pages deploys
+it from `web/` on every push to `master` that changes it.
+
+It downloads one song as an MP3 for manual transfer to the
 Sansa's `Tracks/` folder. It needs a browser with JavaScript Promise Integration
 (JSPI) and a compatible [yt-dlp-wasm proxy](https://github.com/Project516/yt-dlp-wasm/tree/master/packages/cors-proxy)
 that allows the page's origin. Enter your personal proxy URL and access key in
