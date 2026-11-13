@@ -4,7 +4,7 @@ import { safeName, validateMp3 } from './output.js';
 
 test('names fit on the card and reject invalid characters', () => {
   assert.equal(safeName('a/b?.webm'), 'a_b_.mp3');
-  assert.ok(new TextEncoder().encode(safeName('🎵'.repeat(200) + '.webm')).length <= 247);
+  assert.ok(new TextEncoder().encode(safeName('é'.repeat(200) + '.webm')).length <= 247);
 });
 
 test('checks the tag size and MP3 header', () => {

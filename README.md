@@ -77,15 +77,15 @@ that allows the page's origin. Enter your personal proxy URL and access key in
 Personal proxy settings. The settings stay in browser storage, and the proxy
 handles download requests. Some proxies may be blocked by YouTube.
 
-To run it locally, install Node.js 25 or newer and run:
+To run it locally, install Node.js 25 or newer and pnpm, then run:
 
 ```
 cd web
-npm ci
-npm run dev
+pnpm install
+pnpm dev
 ```
 
-Run `npm run build` to create the static site in `web/dist/`. Conversion runs in
+Run `pnpm build` to create the static site in `web/dist/`. Conversion runs in
 the browser and may take time and memory for long recordings.
 
 ## License

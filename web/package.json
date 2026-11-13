@@ -2,11 +2,18 @@
   "name": "sansa-dl-web",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build", "test": "node --test" },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "node --test"
+  },
   "dependencies": {
     "@ffmpeg/core": "^0.12.10",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@project516/yt-dlp-wasm": "0.6.2"
   },
-  "devDependencies": { "vite": "^7.3.1" }
+  "devDependencies": {
+    "vite": "^7.3.1"
+  },
+  "packageManager": "pnpm@12.18.0"
 }
