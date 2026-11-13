@@ -71,7 +71,7 @@ $('#download-form').addEventListener('submit', async (event) => {
     save.hidden = false;
     status.textContent = 'Your MP3 is ready.';
   } catch (error) {
-    status.textContent = `Could not prepare the song: ${error.message}`;
+    status.textContent = `Could not prepare the song: ${error?.message ?? error}`;
   } finally {
     ytdlp?.terminate();
     ffmpeg?.terminate();
