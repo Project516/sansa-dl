@@ -178,12 +178,6 @@ pub fn restore(mut jobs: Vec<Job>) -> Vec<Job> {
     jobs.retain(|j| !matches!(j.stage, Stage::Copied | Stage::Canceled));
     for job in &mut jobs {
         let kept_download = job.downloaded.as_ref().is_some_and(|f| f.exists());
-        if matches!(job.stage, Stage::Downloading)
-            && !kept_download
-            && let Some(source) = job.soulseek.as_mut()
-        {
-            source.transfer = None;
-        }
         job.stage = match job.stage {
             Stage::Downloading | Stage::Fixing if kept_download => Stage::Fixing,
             Stage::Downloading | Stage::Fixing => Stage::Waiting,
@@ -289,6 +283,29 @@ mod tests {
                 Stage::Failed
             ]
         );
+    }
+
+    #[test]
+    fn restore_keeps_soulseek_transfer_for_file_recovery() {
+        let mut pending = job(Stage::Downloading);
+        pending.soulseek = Some(SoulseekJob {
+            peer: crate::slskd::PeerFile {
+                username: "peer".into(),
+                filename: "track.mp3".into(),
+                size: 5,
+                length: None,
+                bitrate: None,
+            },
+            transfer: Some(crate::slskd::Transfer {
+                id: "a".into(),
+                username: "peer".into(),
+                destination: "b".repeat(48),
+                size: 5,
+            }),
+        });
+        let restored = restore(vec![pending]);
+        assert_eq!(restored[0].stage, Stage::Waiting);
+        assert!(restored[0].soulseek.as_ref().unwrap().transfer.is_some());
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Condvar, Mutex, mpsc};
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tungstenite::{Message, client::IntoClientRequest};
 
@@ -40,7 +40,7 @@ pub enum TransferStatus {
 pub struct Slskd {
     child: Mutex<Child>,
     enqueue_lock: Mutex<()>,
-    stopped: (Mutex<bool>, Condvar),
+    output_closed: Mutex<mpsc::Receiver<Result<(), String>>>,
     agent: ureq::Agent,
     base: String,
     key: String,
@@ -106,8 +106,10 @@ impl Slskd {
         let stdout = child.stdout.take().ok_or("Could not read slskd output")?;
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
+            let mut logged_in = false;
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if line.contains("Logged in to the Soulseek server") {
+                if !logged_in && line.contains("Logged in to the Soulseek server") {
+                    logged_in = true;
                     let _ = tx.send(Ok(()));
                 }
                 if line.contains("Application terminated unexpectedly")
@@ -131,7 +133,7 @@ impl Slskd {
         Ok(Self {
             child: Mutex::new(child),
             enqueue_lock: Mutex::new(()),
-            stopped: (Mutex::new(false), Condvar::new()),
+            output_closed: Mutex::new(rx),
             agent: crate::net::agent(),
             base: format!("http://127.0.0.1:{port}"),
             key,
@@ -310,16 +312,8 @@ impl Slskd {
             {
                 return Ok(TransferStatus::Failed(error.to_string()));
             }
-            let dir = self.downloads.join(&transfer.destination);
-            if let Ok(entries) = fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    if let Ok(meta) = entry.metadata()
-                        && entry.file_type().is_ok_and(|t| t.is_file())
-                        && meta.len() == transfer.size
-                    {
-                        return Ok(TransferStatus::Complete(entry.path()));
-                    }
-                }
+            if let Some(path) = self.completed_file(transfer) {
+                return Ok(TransferStatus::Complete(path));
             }
         }
         Ok(TransferStatus::Active {
@@ -329,6 +323,20 @@ impl Slskd {
                 .unwrap_or(0.0)
                 / 100.0,
         })
+    }
+
+    pub fn completed_file(&self, transfer: &Transfer) -> Option<PathBuf> {
+        if !valid_component(&transfer.destination) {
+            return None;
+        }
+        fs::read_dir(self.downloads.join(&transfer.destination))
+            .ok()?
+            .flatten()
+            .find_map(|entry| {
+                (entry.file_type().is_ok_and(|t| t.is_file())
+                    && entry.metadata().is_ok_and(|m| m.len() == transfer.size))
+                .then(|| entry.path())
+            })
     }
 
     pub fn cancel(&self, transfer: &Transfer) -> Result<(), String> {
@@ -352,15 +360,11 @@ impl Slskd {
             let _ = child.kill();
             let _ = child.wait();
         }
-        if let Ok(mut stopped) = self.stopped.0.lock() {
-            *stopped = true;
-            self.stopped.1.notify_all();
-        }
     }
 
     pub fn wait_for_stop(&self) {
-        if let Ok(stopped) = self.stopped.0.lock() {
-            drop(self.stopped.1.wait_while(stopped, |stopped| !*stopped));
+        if let Ok(receiver) = self.output_closed.lock() {
+            let _ = receiver.recv();
         }
     }
 }
@@ -436,6 +440,32 @@ mod tests {
     }
 
     #[test]
+    fn finds_completed_download_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = "a".repeat(48);
+        let folder = dir.path().join(&destination);
+        fs::create_dir(&folder).unwrap();
+        let path = folder.join("track.mp3");
+        fs::write(&path, b"audio").unwrap();
+        let client = Slskd {
+            child: Mutex::new(Command::new("sleep").arg("60").spawn().unwrap()),
+            enqueue_lock: Mutex::new(()),
+            output_closed: Mutex::new(mpsc::channel().1),
+            agent: crate::net::agent(),
+            base: String::new(),
+            key: String::new(),
+            downloads: dir.path().into(),
+        };
+        let transfer = Transfer {
+            id: "a".into(),
+            username: "peer".into(),
+            destination,
+            size: 5,
+        };
+        assert_eq!(client.completed_file(&transfer), Some(path));
+    }
+
+    #[test]
     fn search_waits_for_final_event_and_fetches_results() {
         use std::io::{Read, Write};
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -499,7 +529,7 @@ mod tests {
         let client = Slskd {
             child: Mutex::new(child),
             enqueue_lock: Mutex::new(()),
-            stopped: (Mutex::new(false), Condvar::new()),
+            output_closed: Mutex::new(mpsc::channel().1),
             agent: crate::net::agent(),
             base: format!("http://{address}"),
             key: "0123456789abcdef".into(),

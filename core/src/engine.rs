@@ -80,6 +80,7 @@ enum Msg {
     SetSponsorBlock(bool),
     SoulseekLogin(String, String),
     SoulseekStarted(Result<Arc<Slskd>, String>),
+    SoulseekExited(Arc<Slskd>),
     SearchPeers(Recording),
     PeersFound(u64, Result<Vec<PeerFile>, String>),
     DownloadPeer(usize),
@@ -556,6 +557,8 @@ impl Core {
                                 client.stop();
                             }
                             client.wait_for_stop();
+                            client.stop();
+                            let _ = tx.send(Msg::SoulseekExited(client));
                         }
                         Err(error) => {
                             let _ = tx.send(Msg::SoulseekStarted(Err(error)));
@@ -580,6 +583,24 @@ impl Core {
                         });
                     }
                     Err(text) => (self.emit)(UiEvent::SoulseekStatus { ready: false, text }),
+                }
+            }
+            Msg::SoulseekExited(client) => {
+                if self
+                    .soulseek
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &client))
+                {
+                    self.soulseek = None;
+                    self.peer_generation += 1;
+                    (self.emit)(UiEvent::PeerSearching(false));
+                    (self.emit)(UiEvent::PeerError(
+                        "Soulseek disconnected. Sign in again.".into(),
+                    ));
+                    (self.emit)(UiEvent::SoulseekStatus {
+                        ready: false,
+                        text: "Soulseek disconnected. Sign in again.".into(),
+                    });
                 }
             }
             Msg::SearchPeers(recording) => {
@@ -1349,9 +1370,13 @@ fn soulseek_download(
     cancel: &Cancel,
     tx: &Sender<Msg>,
 ) -> Result<PathBuf, String> {
-    let transfer = match &source.transfer {
-        Some(transfer) => transfer.clone(),
-        None => {
+    let mut recovered = source
+        .transfer
+        .as_ref()
+        .and_then(|transfer| client.completed_file(transfer));
+    let transfer = match (&source.transfer, recovered.is_some()) {
+        (Some(transfer), true) => transfer.clone(),
+        _ => {
             let transfer = client.enqueue(&source.peer)?;
             let _ = tx.send(Msg::SoulseekQueued {
                 id,
@@ -1367,7 +1392,11 @@ fn soulseek_download(
             let _ = client.cancel(&transfer);
             return Err("Canceled".into());
         }
-        match client.transfer(&transfer)? {
+        let status = match recovered.take() {
+            Some(path) => TransferStatus::Complete(path),
+            None => client.transfer(&transfer)?,
+        };
+        match status {
             TransferStatus::Failed(reason) => return Err(reason),
             TransferStatus::Active { progress } => {
                 if progress >= 1.0 {
