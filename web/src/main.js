@@ -3,9 +3,10 @@ import { createYtDlp } from '@project516/yt-dlp-wasm';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import coreURL from '../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js?url';
 import wasmURL from '../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm?url';
-import wheelURL from '../node_modules/@project516/yt-dlp-wasm/dist/yt_dlp-2026.10.26-py3-none-any.whl?url';
 import { safeName, validateMp3 } from './output.js';
 
+// The wheel name changes with each yt-dlp release.
+const [wheelURL] = Object.values(import.meta.glob('../node_modules/@project516/yt-dlp-wasm/dist/*.whl', { query: '?url', import: 'default', eager: true }));
 const $ = (selector) => document.querySelector(selector);
 const proxy = $('#proxy');
 const key = $('#key');
