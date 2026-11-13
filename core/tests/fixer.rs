@@ -152,6 +152,19 @@ fn applies_selected_recording_metadata() {
         info.tags.get("album").map(String::as_str),
         Some("Selected album")
     );
+
+    let metadata = fixer::Metadata {
+        album: None,
+        ..metadata
+    };
+    let output =
+        fixer::fix_with_metadata(&tools, &input, &dir.path().join("outbox"), Some(&metadata))
+            .unwrap();
+    let info = fixer::probe(&tools.ffprobe, &output).unwrap();
+    assert_eq!(
+        info.tags.get("album").map(String::as_str),
+        Some("Selected artist")
+    );
 }
 
 #[test]

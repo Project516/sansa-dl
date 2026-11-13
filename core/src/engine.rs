@@ -532,8 +532,15 @@ impl Core {
                 });
                 let tx = self.tx.clone();
                 let dirs = self.dirs.clone();
+                let keep: Vec<String> = self
+                    .jobs
+                    .iter()
+                    .filter_map(|job| job.soulseek.as_ref()?.transfer.as_ref())
+                    .map(|transfer| transfer.destination.clone())
+                    .collect();
                 spawn("soulseek-start", move || {
                     let root = dirs.tools.join("slskd");
+                    clean_soulseek_files(&dirs.data.join("slskd"), &keep);
                     let result = (|| {
                         let installed = match crate::slskd_tools::find(&root) {
                             Some(found) => found,
@@ -543,6 +550,7 @@ impl Core {
                                 crate::slskd_tools::install(&agent, &release, &root)?
                             }
                         };
+                        crate::slskd_tools::prune(&root, &installed.version);
                         Slskd::start(
                             &installed.executable,
                             &dirs.data.join("slskd"),
@@ -610,6 +618,7 @@ impl Core {
                 (self.emit)(UiEvent::PeerResults(Vec::new()));
                 (self.emit)(UiEvent::PeerError(String::new()));
                 let Some(client) = self.soulseek.clone() else {
+                    (self.emit)(UiEvent::PeerSearching(false));
                     (self.emit)(UiEvent::PeerError("Sign in to Soulseek first".into()));
                     return;
                 };
@@ -866,6 +875,15 @@ impl Core {
         if let Some(cancel) = self.cancels.remove(&id) {
             cancel.cancel();
         }
+        // The worker sleeps between polls; cancel now so a retry can enqueue the file again.
+        if let (Some(client), Some(transfer)) = (
+            self.soulseek.clone(),
+            job.soulseek.as_ref().and_then(|s| s.transfer.clone()),
+        ) {
+            spawn("soulseek-cancel", move || {
+                let _ = client.cancel(&transfer);
+            });
+        }
         self.show_all();
     }
 
@@ -934,7 +952,6 @@ impl Core {
 
     fn fixed(&mut self, id: u64, result: Result<PathBuf, String>) {
         self.cancels.remove(&id);
-        let downloads = self.dirs.data.join("slskd/downloads");
         let Some(job) = self.job_mut(id).filter(|j| j.stage == Stage::Fixing) else {
             // Canceled while fixing: the result must not reach the card.
             if let Ok(file) = result {
@@ -945,9 +962,6 @@ impl Core {
         job.running = false;
         match result {
             Ok(outbox_file) => {
-                if let Some(transfer) = job.soulseek.as_ref().and_then(|s| s.transfer.as_ref()) {
-                    cleanup_soulseek_download(&downloads, transfer);
-                }
                 job.stage = Stage::WaitingCard;
                 job.outbox_file = Some(outbox_file);
                 if let Some(file) = job.downloaded.take()
@@ -1338,26 +1352,15 @@ impl Core {
 
 // Workers ------------------------------------------------------------------
 
-fn cleanup_soulseek_download(root: &Path, transfer: &Transfer) {
-    if transfer.destination.len() != 48
-        || !transfer.destination.bytes().all(|b| b.is_ascii_hexdigit())
-    {
-        return;
-    }
-    let dir = root.join(&transfer.destination);
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return;
-    };
-    let files: Vec<_> = entries.flatten().collect();
-    if files.len() != 1 {
-        return;
-    }
-    let file = &files[0];
-    if file.file_type().is_ok_and(|t| t.is_file())
-        && file.metadata().is_ok_and(|m| m.len() == transfer.size)
-        && fs::remove_file(file.path()).is_ok()
-    {
-        let _ = fs::remove_dir(dir);
+/// Drops slskd files that no job waits for. Call while slskd is stopped.
+fn clean_soulseek_files(data: &Path, keep: &[String]) {
+    let _ = fs::remove_dir_all(data.join("incomplete"));
+    if let Ok(entries) = fs::read_dir(data.join("downloads")) {
+        for entry in entries.flatten() {
+            if !keep.iter().any(|d| entry.file_name() == d.as_str()) {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
     }
 }
 
@@ -1387,6 +1390,8 @@ fn soulseek_download(
         }
     };
     let mut finishing_since = None;
+    let mut last_progress = -1.0;
+    let mut delay = Duration::from_secs(2);
     loop {
         if cancel.is_cancelled() {
             let _ = client.cancel(&transfer);
@@ -1407,6 +1412,13 @@ fn soulseek_download(
                 } else {
                     finishing_since = None;
                 }
+                // slskd has no transfer events, so poll, and slow down while a peer queues us.
+                delay = if progress != last_progress {
+                    Duration::from_secs(2)
+                } else {
+                    (delay * 2).min(Duration::from_secs(30))
+                };
+                last_progress = progress;
                 let _ = tx.send(Msg::Progress {
                     id,
                     generation,
@@ -1419,18 +1431,14 @@ fn soulseek_download(
                 fs::create_dir_all(dir).map_err(|e| e.to_string())?;
                 let name = source.file_name().ok_or("Downloaded file has no name")?;
                 let target = dir.join(name);
-                let bytes =
-                    fs::copy(&source, &target).map_err(|e| format!("Copy downloaded file: {e}"))?;
-                if bytes != source.metadata().map_err(|e| e.to_string())?.len() {
-                    return Err("Downloaded file changed while copying".into());
+                fs::rename(&source, &target).map_err(|e| format!("Move downloaded file: {e}"))?;
+                if let Some(folder) = source.parent() {
+                    let _ = fs::remove_dir(folder);
                 }
-                fs::File::open(&target)
-                    .and_then(|f| f.sync_all())
-                    .map_err(|e| e.to_string())?;
                 return Ok(target);
             }
         }
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(delay);
     }
 }
 
@@ -1612,23 +1620,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cleanup_only_removes_the_completed_soulseek_file() {
-        let root = tempfile::tempdir().unwrap();
-        let destination = "a".repeat(48);
-        let dir = root.path().join(&destination);
-        fs::create_dir(&dir).unwrap();
-        fs::write(dir.join("track"), b"audio").unwrap();
-        let mut transfer = Transfer {
-            id: "id".into(),
-            username: "peer".into(),
-            destination,
-            size: 4,
-        };
-        cleanup_soulseek_download(root.path(), &transfer);
-        assert!(dir.exists());
-        transfer.size = 5;
-        cleanup_soulseek_download(root.path(), &transfer);
-        assert!(!dir.exists());
+    fn soulseek_cleanup_keeps_only_awaited_downloads() {
+        let data = tempfile::tempdir().unwrap();
+        for dir in ["downloads/kept", "downloads/stale", "incomplete/partial"] {
+            fs::create_dir_all(data.path().join(dir)).unwrap();
+        }
+        clean_soulseek_files(data.path(), &["kept".into()]);
+        assert!(data.path().join("downloads/kept").exists());
+        assert!(!data.path().join("downloads/stale").exists());
+        assert!(!data.path().join("incomplete").exists());
     }
 
     #[test]

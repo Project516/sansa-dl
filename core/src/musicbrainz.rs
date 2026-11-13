@@ -52,7 +52,7 @@ pub fn search(query: &str) -> Result<Vec<Recording>, String> {
     let mut last = LAST_REQUEST
         .get_or_init(|| Mutex::new(None))
         .lock()
-        .map_err(|_| "MusicBrainz request lock failed".to_string())?;
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(wait) = last.and_then(|time| Duration::from_secs(1).checked_sub(time.elapsed())) {
         std::thread::sleep(wait);
     }

@@ -97,6 +97,8 @@ impl Slskd {
             .env("SLSKD_NO_HTTPS", "true")
             .env("SLSKD_API_KEY", &key)
             .env("SLSKD_NO_VERSION_CHECK", "true")
+            // The app keeps the queue; a persisted slskd would resume transfers on its own.
+            .env("SLSKD_VOLATILE", "true")
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -113,7 +115,7 @@ impl Slskd {
                     let _ = tx.send(Ok(()));
                 }
                 if line.contains("Application terminated unexpectedly")
-                    || line.contains("Failed to log in")
+                    || (!logged_in && line.contains("Failed to log in"))
                 {
                     let _ = tx.send(Err("Soulseek login failed".to_string()));
                 }

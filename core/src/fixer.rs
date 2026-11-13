@@ -180,24 +180,27 @@ pub fn fix_with_metadata(
     args.push(input.to_string_lossy().into_owned());
     args.extend(plan.args.iter().cloned());
     let blank = |key: &str| info.tags.get(key).is_none_or(|v| v.trim().is_empty());
-    if metadata.is_none()
-        && blank("album")
-        && let Some(artist) = info.tags.get("artist").filter(|a| !a.trim().is_empty())
-    {
-        args.push("-metadata".into());
-        args.push(format!("album={artist}"));
-    }
+    let mut tags: Vec<(&str, &str)> = Vec::new();
     if let Some(metadata) = metadata {
-        for (key, value) in [
-            ("title", Some(metadata.title.as_str())),
-            ("artist", Some(metadata.artist.as_str())),
-            ("album", metadata.album.as_deref()),
-        ] {
-            if let Some(value) = value {
-                args.push("-metadata".into());
-                args.push(format!("{key}={value}"));
-            }
+        tags.push(("title", &metadata.title));
+        tags.push(("artist", &metadata.artist));
+        if let Some(album) = &metadata.album {
+            tags.push(("album", album));
         }
+    }
+    let artist = metadata
+        .map(|m| m.artist.as_str())
+        .or(info.tags.get("artist").map(String::as_str))
+        .filter(|a| !a.trim().is_empty());
+    if !tags.iter().any(|(key, _)| *key == "album")
+        && blank("album")
+        && let Some(artist) = artist
+    {
+        tags.push(("album", artist));
+    }
+    for (key, value) in tags {
+        args.push("-metadata".into());
+        args.push(format!("{key}={value}"));
     }
     let temp = outbox.join(temp_name());
     args.extend([

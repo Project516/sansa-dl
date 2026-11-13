@@ -99,6 +99,7 @@ impl Job {
     pub fn status(&self) -> String {
         match self.stage {
             Stage::Finding => "Finding".into(),
+            Stage::Waiting if self.soulseek.is_some() => "Waiting for Soulseek".into(),
             Stage::Waiting => "Waiting".into(),
             Stage::Downloading if self.processing => "Processing".into(),
             Stage::Downloading => match (self.fraction, self.speed) {

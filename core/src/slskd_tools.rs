@@ -99,6 +99,23 @@ pub fn find(root: &Path) -> Option<Installed> {
     best
 }
 
+/// Removes older bundles and stages left by other processes. Call while no slskd runs.
+pub fn prune(root: &Path, newest: &str) {
+    let ours = format!(".stage-{}-", std::process::id());
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let stale_stage = name.starts_with(".stage-") && !name.starts_with(&ours);
+        // Only older ones: the updater may have just added a newer bundle.
+        let older = valid_version(&name) && tools::is_newer(newest, &name);
+        if stale_stage || older {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 struct Stage(PathBuf);
 impl Drop for Stage {
     fn drop(&mut self) {
@@ -338,5 +355,10 @@ mod tests {
         }
         assert_eq!(find(dir.path()).unwrap().version, "0.10.0");
         assert!(dir.path().join("0.9.0/slskd").exists());
+        fs::create_dir(dir.path().join(".stage-1-0")).unwrap();
+        prune(dir.path(), "0.10.0");
+        assert!(!dir.path().join("0.9.0").exists());
+        assert!(!dir.path().join(".stage-1-0").exists());
+        assert_eq!(find(dir.path()).unwrap().version, "0.10.0");
     }
 }
