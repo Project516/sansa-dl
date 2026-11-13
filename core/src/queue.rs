@@ -30,6 +30,10 @@ pub struct Job {
     pub reason: String,
     pub downloaded: Option<PathBuf>,
     pub outbox_file: Option<PathBuf>,
+    #[serde(default)]
+    pub metadata: Option<crate::fixer::Metadata>,
+    #[serde(default)]
+    pub soulseek: Option<SoulseekJob>,
     #[serde(skip)]
     pub running: bool,
     #[serde(skip)]
@@ -54,6 +58,8 @@ impl Job {
             reason: String::new(),
             downloaded: None,
             outbox_file: None,
+            metadata: None,
+            soulseek: None,
             running: false,
             generation: 0,
             fraction: None,
@@ -93,6 +99,7 @@ impl Job {
     pub fn status(&self) -> String {
         match self.stage {
             Stage::Finding => "Finding".into(),
+            Stage::Waiting if self.soulseek.is_some() => "Waiting for Soulseek".into(),
             Stage::Waiting => "Waiting".into(),
             Stage::Downloading if self.processing => "Processing".into(),
             Stage::Downloading => match (self.fraction, self.speed) {
@@ -139,6 +146,12 @@ impl Job {
             Stage::Canceled => "canceled",
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulseekJob {
+    pub peer: crate::slskd::PeerFile,
+    pub transfer: Option<crate::slskd::Transfer>,
 }
 
 /// http(s) links in pasted text, in order, without repeats.
@@ -271,6 +284,29 @@ mod tests {
                 Stage::Failed
             ]
         );
+    }
+
+    #[test]
+    fn restore_keeps_soulseek_transfer_for_file_recovery() {
+        let mut pending = job(Stage::Downloading);
+        pending.soulseek = Some(SoulseekJob {
+            peer: crate::slskd::PeerFile {
+                username: "peer".into(),
+                filename: "track.mp3".into(),
+                size: 5,
+                length: None,
+                bitrate: None,
+            },
+            transfer: Some(crate::slskd::Transfer {
+                id: "a".into(),
+                username: "peer".into(),
+                destination: "b".repeat(48),
+                size: 5,
+            }),
+        });
+        let restored = restore(vec![pending]);
+        assert_eq!(restored[0].stage, Stage::Waiting);
+        assert!(restored[0].soulseek.as_ref().unwrap().transfer.is_some());
     }
 
     #[test]

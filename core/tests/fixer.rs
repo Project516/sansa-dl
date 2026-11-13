@@ -115,6 +115,59 @@ fn mp3_with_cover(tools: &Ffmpeg, dir: &Path) -> PathBuf {
 }
 
 #[test]
+fn applies_selected_recording_metadata() {
+    let tools = need_ffmpeg!();
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.mp3");
+    run(
+        &tools,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=1",
+            "-c:a",
+            "libmp3lame",
+            s(&input),
+        ],
+    );
+    let metadata = fixer::Metadata {
+        title: "Selected title".into(),
+        artist: "Selected artist".into(),
+        album: Some("Selected album".into()),
+    };
+    let output =
+        fixer::fix_with_metadata(&tools, &input, &dir.path().join("outbox"), Some(&metadata))
+            .unwrap();
+    let info = fixer::probe(&tools.ffprobe, &output).unwrap();
+    assert_eq!(
+        info.tags.get("title").map(String::as_str),
+        Some("Selected title")
+    );
+    assert_eq!(
+        info.tags.get("artist").map(String::as_str),
+        Some("Selected artist")
+    );
+    assert_eq!(
+        info.tags.get("album").map(String::as_str),
+        Some("Selected album")
+    );
+
+    let metadata = fixer::Metadata {
+        album: None,
+        ..metadata
+    };
+    let output =
+        fixer::fix_with_metadata(&tools, &input, &dir.path().join("outbox"), Some(&metadata))
+            .unwrap();
+    let info = fixer::probe(&tools.ffprobe, &output).unwrap();
+    assert_eq!(
+        info.tags.get("album").map(String::as_str),
+        Some("Selected artist")
+    );
+}
+
+#[test]
 fn strips_a_huge_cover_from_an_mp3_and_keeps_tags() {
     let tools = need_ffmpeg!();
     let dir = tempfile::tempdir().unwrap();

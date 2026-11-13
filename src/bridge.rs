@@ -35,6 +35,14 @@ pub mod qobject {
         #[qproperty(QString, updated_version)]
         #[qproperty(QString, restart_error)]
         #[qproperty(bool, has_finished)]
+        #[qproperty(QString, search_results)]
+        #[qproperty(QString, search_error)]
+        #[qproperty(bool, searching)]
+        #[qproperty(bool, soulseek_ready)]
+        #[qproperty(QString, soulseek_status)]
+        #[qproperty(QString, peer_results)]
+        #[qproperty(QString, peer_error)]
+        #[qproperty(bool, peer_searching)]
         type Backend = super::BackendRust;
 
         #[cxx_override]
@@ -97,6 +105,18 @@ pub mod qobject {
         fn add_links(self: &Backend, text: &QString);
 
         #[qinvokable]
+        fn search_music(self: Pin<&mut Backend>, query: &QString);
+
+        #[qinvokable]
+        fn soulseek_login(self: &Backend, username: &QString, password: &QString);
+
+        #[qinvokable]
+        fn find_peers(self: Pin<&mut Backend>, index: i32);
+
+        #[qinvokable]
+        fn download_peer(self: &Backend, index: i32);
+
+        #[qinvokable]
         fn cancel(self: &Backend, id: i64);
 
         #[qinvokable]
@@ -156,6 +176,16 @@ pub struct BackendRust {
     updated_version: QString,
     restart_error: QString,
     has_finished: bool,
+    search_results: QString,
+    search_error: QString,
+    searching: bool,
+    search_generation: u64,
+    music_rows: Vec<sansa_dl_core::musicbrainz::Recording>,
+    soulseek_ready: bool,
+    soulseek_status: QString,
+    peer_results: QString,
+    peer_error: QString,
+    peer_searching: bool,
     rows: Vec<JobView>,
     engine: Option<Engine>,
     instance: Option<Instance>,
@@ -214,6 +244,16 @@ impl qobject::Backend {
             UiEvent::Updated(version) => {
                 self.set_updated_version(QString::from(&format!("v{version}")));
             }
+            UiEvent::SoulseekStatus { ready, text } => {
+                self.as_mut().set_soulseek_ready(ready);
+                self.set_soulseek_status(QString::from(&text));
+            }
+            UiEvent::PeerResults(rows) => {
+                let json = serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into());
+                self.set_peer_results(QString::from(&json));
+            }
+            UiEvent::PeerError(error) => self.set_peer_error(QString::from(&error)),
+            UiEvent::PeerSearching(searching) => self.set_peer_searching(searching),
         }
     }
 
@@ -314,6 +354,73 @@ impl qobject::Backend {
         let links = parse_links(&text.to_string());
         if let (false, Some(engine)) = (links.is_empty(), self.engine()) {
             engine.add_links(links);
+        }
+    }
+
+    fn search_music(mut self: Pin<&mut Self>, query: &QString) {
+        let query = query.to_string();
+        let generation = self.rust().search_generation.wrapping_add(1);
+        self.as_mut().rust_mut().search_generation = generation;
+        self.as_mut().set_search_error(QString::default());
+        self.as_mut().set_search_results(QString::from("[]"));
+        self.as_mut().rust_mut().music_rows.clear();
+        if query.trim().is_empty() {
+            self.set_searching(false);
+            return;
+        }
+        self.as_mut().set_searching(true);
+        let qt = self.qt_thread();
+        std::thread::spawn(move || {
+            let result = sansa_dl_core::musicbrainz::search(&query);
+            let _ = qt.queue(move |mut backend| {
+                if backend.rust().search_generation != generation {
+                    return;
+                }
+                backend.as_mut().set_searching(false);
+                match result {
+                    Ok(rows) => {
+                        let values: Vec<_> = rows
+                            .iter()
+                            .map(|r| {
+                                serde_json::json!({
+                                    "id": r.id, "title": r.title, "artist": r.artist,
+                                    "release": r.release, "length": r.length_ms
+                                })
+                            })
+                            .collect();
+                        backend.as_mut().rust_mut().music_rows = rows;
+                        backend.set_search_results(QString::from(
+                            &serde_json::Value::Array(values).to_string(),
+                        ));
+                    }
+                    Err(error) => backend.set_search_error(QString::from(&error)),
+                }
+            });
+        });
+    }
+
+    fn soulseek_login(&self, username: &QString, password: &QString) {
+        if let Some(engine) = self.engine() {
+            engine.soulseek_login(username.to_string(), password.to_string());
+        }
+    }
+
+    fn find_peers(mut self: Pin<&mut Self>, index: i32) {
+        let recording = usize::try_from(index)
+            .ok()
+            .and_then(|i| self.rust().music_rows.get(i))
+            .cloned();
+        if let (Some(recording), Some(engine)) = (recording, self.engine().cloned()) {
+            self.as_mut().set_peer_error(QString::default());
+            self.as_mut().set_peer_results(QString::from("[]"));
+            self.as_mut().set_peer_searching(true);
+            engine.search_peers(recording);
+        }
+    }
+
+    fn download_peer(&self, index: i32) {
+        if let (Some(engine), Ok(index)) = (self.engine(), usize::try_from(index)) {
+            engine.download_peer(index);
         }
     }
 

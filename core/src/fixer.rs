@@ -18,6 +18,13 @@ pub struct Ffmpeg {
     pub ffprobe: PathBuf,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Metadata {
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+}
+
 pub fn temp_name() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
@@ -152,6 +159,15 @@ pub fn probe(ffprobe: &Path, file: &Path) -> Result<TrackInfo, String> {
 
 /// Returns the fixed file inside `outbox`. The input is left alone.
 pub fn fix(tools: &Ffmpeg, input: &Path, outbox: &Path) -> Result<PathBuf, String> {
+    fix_with_metadata(tools, input, outbox, None)
+}
+
+pub fn fix_with_metadata(
+    tools: &Ffmpeg,
+    input: &Path,
+    outbox: &Path,
+    metadata: Option<&Metadata>,
+) -> Result<PathBuf, String> {
     fs::create_dir_all(outbox).map_err(|e| format!("outbox: {e}"))?;
     let info = probe(&tools.ffprobe, input)?;
     let tag_bytes = rules::id3_size_of(input).map_err(|e| format!("read: {e}"))?;
@@ -164,11 +180,27 @@ pub fn fix(tools: &Ffmpeg, input: &Path, outbox: &Path) -> Result<PathBuf, Strin
     args.push(input.to_string_lossy().into_owned());
     args.extend(plan.args.iter().cloned());
     let blank = |key: &str| info.tags.get(key).is_none_or(|v| v.trim().is_empty());
-    if blank("album")
-        && let Some(artist) = info.tags.get("artist").filter(|a| !a.trim().is_empty())
+    let mut tags: Vec<(&str, &str)> = Vec::new();
+    if let Some(metadata) = metadata {
+        tags.push(("title", &metadata.title));
+        tags.push(("artist", &metadata.artist));
+        if let Some(album) = &metadata.album {
+            tags.push(("album", album));
+        }
+    }
+    let artist = metadata
+        .map(|m| m.artist.as_str())
+        .or(info.tags.get("artist").map(String::as_str))
+        .filter(|a| !a.trim().is_empty());
+    if !tags.iter().any(|(key, _)| *key == "album")
+        && blank("album")
+        && let Some(artist) = artist
     {
+        tags.push(("album", artist));
+    }
+    for (key, value) in tags {
         args.push("-metadata".into());
-        args.push(format!("album={artist}"));
+        args.push(format!("{key}={value}"));
     }
     let temp = outbox.join(temp_name());
     args.extend([
