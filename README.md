@@ -68,6 +68,26 @@ On Fedora: `dnf install gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kir
 
 The tests that make audio fixtures need an `ffmpeg` with the LAME encoder on `PATH`. They skip when it is missing. `packaging/appimage/fetch-tools.sh <dir>` downloads one.
 
+## Browser version
+
+The browser version downloads one song as an MP3 for manual transfer to the
+Sansa's `Tracks/` folder. It needs a browser with JavaScript Promise Integration
+(JSPI) and a compatible [yt-dlp-wasm proxy](https://github.com/Project516/yt-dlp-wasm/tree/master/packages/cors-proxy)
+that allows the page's origin. Enter your personal proxy URL and access key in
+Personal proxy settings. The settings stay in browser storage, and the proxy
+handles download requests. Some proxies may be blocked by YouTube.
+
+To run it locally, install Node.js 25 or newer and pnpm, then run:
+
+```
+cd web
+pnpm install
+pnpm dev
+```
+
+Run `pnpm build` to create the static site in `web/dist/`. Conversion runs in
+the browser and may take time and memory for long recordings.
+
 ## License
 
 AGPL-3.0-only. See [LICENSE](LICENSE).

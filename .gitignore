@@ -3,3 +3,5 @@
 /dist
 *.AppImage
 *.sha256
+/web/node_modules
+/web/dist

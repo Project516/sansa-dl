@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#e8eef2">
+  <title>Sansa DL</title>
+</head>
+<body>
+  <main>
+    <header><span class="mark" aria-hidden="true">♫</span><span>Sansa DL <small>for the web</small></span></header>
+    <section class="intro">
+      <h1>Take your music<br>with you.</h1>
+      <p>Turn a YouTube link into an MP3 ready to copy to your player's SD card.</p>
+    </section>
+    <section class="tool" aria-labelledby="download-heading">
+      <h2 id="download-heading">Download a song</h2>
+      <form id="download-form">
+        <label for="url">YouTube link</label>
+        <div class="entry"><input id="url" type="url" placeholder="https://www.youtube.com/watch?v=…" required><button id="submit" type="submit">Make MP3</button></div>
+      </form>
+      <p id="status" role="status" aria-live="polite">Your song will be prepared in this browser.</p>
+      <a id="save" hidden>Save MP3</a>
+    </section>
+    <details class="settings">
+      <summary>Personal proxy settings</summary>
+      <p>Browser downloads need a <a href="https://github.com/Project516/yt-dlp-wasm/tree/master/packages/cors-proxy" target="_blank" rel="noopener noreferrer">yt-dlp-wasm proxy</a>. Enter its URL and access key. The proxy must allow this site's origin.</p>
+      <form id="proxy-form">
+        <label for="proxy">Proxy URL</label><input id="proxy" type="url" placeholder="https://proxy.example.com" required>
+        <label for="key">Access key <span>(if required)</span></label><input id="key" type="password" autocomplete="off">
+        <button type="submit" class="secondary">Save settings</button><span id="settings-status" role="status"></span>
+      </form>
+      <p class="note">Settings are stored in this browser. Your proxy handles the download requests.</p>
+    </details>
+    <footer>After saving, copy the MP3 into <strong>Tracks</strong> on your Sansa's SD card.</footer>
+  </main>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
