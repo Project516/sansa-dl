@@ -4,6 +4,14 @@ export function safeName(name) {
   return `${stem || '_'}.mp3`;
 }
 
+export function explain(error) {
+  const message = String(error?.message ?? error);
+  if (message.includes('Failed to fetch')) {
+    return 'Could not reach your proxy. Check the proxy URL in Proxy settings, and that the proxy allows this site.';
+  }
+  return `Could not make the MP3: ${message}`;
+}
+
 export function validateMp3(bytes) {
   let offset = 0;
   if (bytes.length >= 10 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
