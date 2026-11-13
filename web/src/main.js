@@ -3,7 +3,7 @@ import { createYtDlp } from '@project516/yt-dlp-wasm';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import coreURL from '../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js?url';
 import wasmURL from '../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm?url';
-import { safeName, validateMp3 } from './output.js';
+import { explain, safeName, validateMp3 } from './output.js';
 
 // The wheel name changes with each yt-dlp release.
 const [wheelURL] = Object.values(import.meta.glob('../node_modules/@project516/yt-dlp-wasm/dist/*.whl', { query: '?url', import: 'default', eager: true }));
@@ -14,8 +14,10 @@ const save = $('#save');
 const meter = $('#meter');
 
 // fraction: undefined hides the bar, null shows it busy, 0 to 1 fills it.
-function screen(title, detail = '', fraction) {
+// Messages the user must act on show in full; song titles are clamped.
+function screen(title, detail = '', fraction, message = false) {
   $('#screen-title').textContent = title;
+  $('#screen-detail').classList.toggle('message', message);
   $('#screen-detail').textContent = detail;
   meter.hidden = fraction === undefined;
   meter.classList.toggle('busy', fraction === null);
@@ -46,7 +48,7 @@ $('#download-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!proxy.value.trim()) {
     document.querySelector('details').open = true;
-    screen('Set up a proxy', 'Add your proxy URL in Proxy settings below.');
+    screen('Set up a proxy', 'Add your proxy URL in Proxy settings below.', undefined, true);
     proxy.focus();
     return;
   }
@@ -89,7 +91,7 @@ $('#download-form').addEventListener('submit', async (event) => {
     save.hidden = false;
     screen('Ready to save', name, 1);
   } catch (error) {
-    screen('Stopped', `Could not make the MP3: ${error?.message ?? error}`);
+    screen('Stopped', explain(error), undefined, true);
   } finally {
     ytdlp?.terminate();
     ffmpeg?.terminate();

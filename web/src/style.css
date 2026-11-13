@@ -116,6 +116,8 @@ h1 {
   overflow: hidden;
 }
 
+.screen .screen-detail.message { display: block; }
+
 .meter {
   height: 0.7rem;
   border: 2px solid var(--pixel);

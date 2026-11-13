@@ -1,10 +1,15 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { safeName, validateMp3 } from './output.js';
+import { explain, safeName, validateMp3 } from './output.js';
 
 test('names fit on the card and reject invalid characters', () => {
   assert.equal(safeName('a/b?.webm'), 'a_b_.mp3');
   assert.ok(new TextEncoder().encode(safeName('é'.repeat(200) + '.webm')).length <= 247);
+});
+
+test('explains an unreachable proxy', () => {
+  assert.match(explain(new Error("TransportError('TypeError: Failed to fetch')")), /reach your proxy/);
+  assert.equal(explain('boom'), 'Could not make the MP3: boom');
 });
 
 test('checks the tag size and MP3 header', () => {
