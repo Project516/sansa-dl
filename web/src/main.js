@@ -23,7 +23,7 @@ function screen(title, detail = '', fraction, message = false) {
   meter.classList.toggle('busy', fraction === null);
   const value = Math.round(Math.min(1, Math.max(0, fraction ?? 0)) * 100);
   $('#meter-fill').style.width = fraction === null ? '' : `${value}%`;
-  if (fraction === null) meter.removeAttribute('aria-valuenow');
+  if (fraction == null) meter.removeAttribute('aria-valuenow');
   else meter.setAttribute('aria-valuenow', value);
 }
 
