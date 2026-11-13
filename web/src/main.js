@@ -10,8 +10,21 @@ const [wheelURL] = Object.values(import.meta.glob('../node_modules/@project516/y
 const $ = (selector) => document.querySelector(selector);
 const proxy = $('#proxy');
 const key = $('#key');
-const status = $('#status');
 const save = $('#save');
+const meter = $('#meter');
+
+// fraction: undefined hides the bar, null shows it busy, 0 to 1 fills it.
+function screen(title, detail = '', fraction) {
+  $('#screen-title').textContent = title;
+  $('#screen-detail').textContent = detail;
+  meter.hidden = fraction === undefined;
+  meter.classList.toggle('busy', fraction === null);
+  const value = Math.round(Math.min(1, Math.max(0, fraction ?? 0)) * 100);
+  $('#meter-fill').style.width = fraction === null ? '' : `${value}%`;
+  if (fraction === null) meter.removeAttribute('aria-valuenow');
+  else meter.setAttribute('aria-valuenow', value);
+}
+
 let downloadURL;
 try {
   proxy.value = localStorage.getItem('proxy') || '';
@@ -33,7 +46,7 @@ $('#download-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!proxy.value.trim()) {
     document.querySelector('details').open = true;
-    status.textContent = 'Enter your proxy URL before downloading.';
+    screen('Set up a proxy', 'Add your proxy URL in Proxy settings below.');
     proxy.focus();
     return;
   }
@@ -43,18 +56,23 @@ $('#download-form').addEventListener('submit', async (event) => {
   let ytdlp;
   let ffmpeg;
   try {
-    status.textContent = 'Starting downloader. This can take a moment…';
+    screen('Starting', 'Loading the downloader. The first time takes a moment.', null);
     ytdlp = await createYtDlp({ corsProxy: proxy.value.trim(), corsProxyKey: key.value || undefined, wheelURL });
-    status.textContent = 'Downloading audio…';
+    screen('Finding', 'Reading the link', null);
     const info = await ytdlp.extractInfo($('#url').value, { noplaylist: true });
+    const name = info.title || 'Your song';
+    screen('Downloading', name, null);
     const files = await ytdlp.download(info, { format: 'bestaudio/best', noplaylist: true }, {
       onProgress: ({ downloadedBytes, totalBytes }) => {
-        if (downloadedBytes && totalBytes) status.textContent = `Downloading audio… ${Math.min(100, Math.round(downloadedBytes / totalBytes * 100))}%`;
+        if (downloadedBytes && totalBytes) screen('Downloading', name, downloadedBytes / totalBytes);
       },
     });
     if (files.length !== 1) throw new Error('The link did not produce one audio file.');
-    status.textContent = 'Preparing MP3 for your Sansa…';
+    screen('Converting', name, null);
     ffmpeg = new FFmpeg();
+    ffmpeg.on('progress', ({ progress }) => {
+      if (progress >= 0 && progress <= 1) screen('Converting', name, progress);
+    });
     await ffmpeg.load({ coreURL, wasmURL });
     await ffmpeg.writeFile('input', files[0].data);
     const metadata = [];
@@ -69,9 +87,9 @@ $('#download-form').addEventListener('submit', async (event) => {
     save.href = downloadURL;
     save.download = safeName(files[0].name || info.title || 'audio');
     save.hidden = false;
-    status.textContent = 'Your MP3 is ready.';
+    screen('Ready to save', name, 1);
   } catch (error) {
-    status.textContent = `Could not prepare the song: ${error?.message ?? error}`;
+    screen('Stopped', `Could not make the MP3: ${error?.message ?? error}`);
   } finally {
     ytdlp?.terminate();
     ffmpeg?.terminate();

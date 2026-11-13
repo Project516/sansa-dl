@@ -172,6 +172,12 @@ importers:
       '@ffmpeg/ffmpeg':
         specifier: ^0.12.15
         version: 0.12.15
+      '@fontsource/atkinson-hyperlegible-next':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/silkscreen':
+        specifier: 5.3.0
+        version: 5.3.0
       '@project516/yt-dlp-wasm':
         specifier: 0.6.2
         version: 0.6.2
@@ -349,6 +355,12 @@ packages:
   '@ffmpeg/types@0.12.4':
     resolution: {integrity: sha512-k9vJQNBGTxE5AhYDtOYR5rO5fKsspbg51gbcwtbkw2lCdoIILzklulcjJfIDwrtn7XhDeF2M+THwJ2FGrLeV6A==}
     engines: {node: '>=16.x'}
+
+  '@fontsource/atkinson-hyperlegible-next@5.3.0':
+    resolution: {integrity: sha512-8p1tHVoPDo6oYwSO3sMw5snGwFwSf3TmeSF9Gcj792GXdsg6oqvhoItbj6Hj/XZIk0Xs+Cwu6pkLBAl3Q5HrwA==}
+
+  '@fontsource/silkscreen@5.3.0':
+    resolution: {integrity: sha512-M1NQ3LQH0LFNvyFPd/piHEGMImPPtpLglNnLC6Vdcq9kL0jNIOtTQmksAWCc4enbDnw1OnIpZtjNEfRqYm/QmA==}
 
   '@project516/ffmpeg-wasm-core-jspi@0.18.0':
     resolution: {integrity: sha512-IoeD4L9AKAU6ZKzNWZS6ciP/AZyBnP+eDkmkku+ZlpUgy0A+fkWJEKGGT7BZERvEJ2gH/6zgUicfeUSPVd8fwg==}
@@ -699,6 +711,10 @@ snapshots:
       '@ffmpeg/types': 0.12.4
 
   '@ffmpeg/types@0.12.4': {}
+
+  '@fontsource/atkinson-hyperlegible-next@5.3.0': {}
+
+  '@fontsource/silkscreen@5.3.0': {}
 
   '@project516/ffmpeg-wasm-core-jspi@0.18.0': {}
 
