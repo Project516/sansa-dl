@@ -932,6 +932,12 @@ impl Core {
         self.cancels.remove(&id);
         let stopping = self.stopping;
         let Some(job) = self.job_mut(id).filter(|j| j.stage == Stage::Downloading) else {
+            // Canceled while downloading: nothing will fix this file.
+            if let Ok(file) = result
+                && let Some(dir) = file.parent()
+            {
+                let _ = fs::remove_dir_all(dir);
+            }
             return;
         };
         job.running = false;

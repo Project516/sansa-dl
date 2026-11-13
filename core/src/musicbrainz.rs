@@ -57,6 +57,7 @@ pub fn search(query: &str) -> Result<Vec<Recording>, String> {
         std::thread::sleep(wait);
     }
     *last = Some(Instant::now());
+    drop(last);
     search_at(&crate::net::agent(), ENDPOINT, query)
 }
 
