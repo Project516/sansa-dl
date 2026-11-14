@@ -16,7 +16,7 @@ The CI container is `registry.fedoraproject.org/fedora:45`, pinned by digest. Th
 
 ## Layout
 
-- `core/`: Qt-free library (`clipplus-manager-core`). Rules, fixer, transfer, yt-dlp, tools, engine, UDisks2, notifications, single instance, self update.
+- `core/`: Qt-free library (`clipplus-manager-core`). Rules, fixer, transfer, yt-dlp, tools, engine, UDisks2, player detection, Rockbox builds, notifications, single instance, self update.
 - `src/`: the Qt app. `bridge.rs` is the cxx-qt QObject (list model and app state), `main.rs` starts Qt.
 - `qml/`: the Kirigami UI, compiled into the binary.
 - `packaging/appimage/`: AppImage build and tool fetch scripts.
@@ -46,4 +46,6 @@ packaging/appimage/build.sh
 - **Outbox**: the folder of finished songs that wait for the card. It is the persistent queue for the copy step.
 - **Fixer**: `plan()` picks the ffmpeg arguments that make a file playable, `verify()` rechecks the result.
 - **Managed tools**: ffmpeg, ffprobe, yt-dlp and deno, kept in the data folder and updated from their upstream releases. The AppImage bundles the versions current at build time.
+- **Internal drive**: the player's 2 GB vfat drive that holds `.rockbox`. Its label changes, so it is found by drive model or files, never by label alone.
+- **Dev build**: Rockbox built from master. It is the default channel.
 - **Self update**: the AppImage replaces itself from this repo's latest release, then asks for a restart.

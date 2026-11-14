@@ -265,6 +265,11 @@ impl qobject::Backend {
             }
             UiEvent::PeerError(error) => self.set_peer_error(QString::from(&error)),
             UiEvent::PeerSearching(searching) => self.set_peer_searching(searching),
+            UiEvent::Player(_)
+            | UiEvent::RockboxStatus { .. }
+            | UiEvent::RockboxChannel(_)
+            | UiEvent::RockboxLatest { .. }
+            | UiEvent::Themes(_) => {}
         }
     }
 

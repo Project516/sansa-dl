@@ -2,7 +2,7 @@
 //! Changes arrive as D-Bus signals; nothing polls.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use zbus::MatchRule;
 use zbus::blocking::{Connection, MessageIterator, Proxy};
 use zbus::message::Type as MessageType;
@@ -14,9 +14,10 @@ const BLOCK: &str = "org.freedesktop.UDisks2.Block";
 const FILESYSTEM: &str = "org.freedesktop.UDisks2.Filesystem";
 const DRIVE: &str = "org.freedesktop.UDisks2.Drive";
 const LABEL: &str = "SANSA";
+const STOCK_LABEL: &str = "SANSA CLIPP";
 
-type Properties = HashMap<String, OwnedValue>;
-type Objects = HashMap<OwnedObjectPath, HashMap<String, Properties>>;
+pub type Properties = HashMap<String, OwnedValue>;
+pub type Objects = HashMap<OwnedObjectPath, HashMap<String, Properties>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardInfo {
@@ -36,42 +37,135 @@ fn bytes_to_path(bytes: &[u8]) -> PathBuf {
     PathBuf::from(std::ffi::OsStr::from_bytes(&bytes[..end]))
 }
 
-/// The first vfat filesystem labeled SANSA among the UDisks2 objects.
-pub fn find_card(objects: &Objects) -> Option<CardInfo> {
-    let mut found: Vec<CardInfo> = objects
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Internal,
+    Card,
+}
+
+struct DriveInfo {
+    vendor: String,
+    model: String,
+    usb: bool,
+}
+
+fn drive_info(objects: &Objects, block: &Properties) -> Option<DriveInfo> {
+    let path = OwnedObjectPath::try_from(block.get("Drive")?.try_clone().ok()?).ok()?;
+    let drive = objects.get(&path)?.get(DRIVE)?;
+    Some(DriveInfo {
+        vendor: string(drive, "Vendor").unwrap_or_default().trim().into(),
+        model: string(drive, "Model").unwrap_or_default().trim().into(),
+        usb: string(drive, "ConnectionBus").is_some_and(|bus| bus == "usb"),
+    })
+}
+
+fn classify(
+    objects: &Objects,
+    block: &Properties,
+    mount: Option<&Path>,
+    has_rockbox: &dyn Fn(&Path) -> bool,
+) -> Option<Kind> {
+    if string(block, "IdType")? != "vfat" {
+        return None;
+    }
+    let label = string(block, "IdLabel").unwrap_or_default();
+    let drive = drive_info(objects, block);
+    if let Some(drive) = &drive {
+        let rockbox = drive.vendor.eq_ignore_ascii_case("Rockbox");
+        if rockbox && drive.model.eq_ignore_ascii_case("Internal Storage") {
+            return Some(Kind::Internal);
+        }
+        if drive.model.eq_ignore_ascii_case("SD Card Slot") {
+            return Some(Kind::Card);
+        }
+    }
+    if label.eq_ignore_ascii_case(LABEL) {
+        return Some(Kind::Card);
+    }
+    if !drive.is_some_and(|d| d.usb) {
+        return None;
+    }
+    if label.eq_ignore_ascii_case(STOCK_LABEL) || mount.is_some_and(has_rockbox) {
+        return Some(Kind::Internal);
+    }
+    None
+}
+
+fn volume(path: &OwnedObjectPath, interfaces: &HashMap<String, Properties>) -> Option<CardInfo> {
+    let block = interfaces.get(BLOCK)?;
+    let filesystem = interfaces.get(FILESYSTEM)?;
+    let device = block
+        .get("PreferredDevice")
+        .or_else(|| block.get("Device"))
+        .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
+        .map(|b| bytes_to_path(&b).to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let drive = block
+        .get("Drive")
+        .and_then(|v| OwnedObjectPath::try_from(v.try_clone().ok()?).ok())
+        .map(|p| p.as_str().to_string())
+        .filter(|p| p != "/");
+    let mount = filesystem
+        .get("MountPoints")
+        .and_then(|v| Vec::<Vec<u8>>::try_from(v.try_clone().ok()?).ok())
+        .and_then(|points| points.first().map(|p| bytes_to_path(p)));
+    Some(CardInfo {
+        block: path.as_str().to_string(),
+        device,
+        drive,
+        mount,
+    })
+}
+
+/// The microSD card and the player's internal drive, when present.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Volumes {
+    pub card: Option<CardInfo>,
+    pub internal: Option<CardInfo>,
+}
+
+fn volumes_of(objects: &Objects, has_rockbox: &dyn Fn(&Path) -> bool) -> Vec<(Kind, CardInfo)> {
+    let mut found: Vec<(Kind, CardInfo)> = objects
         .iter()
         .filter_map(|(path, interfaces)| {
-            let block = interfaces.get(BLOCK)?;
-            let filesystem = interfaces.get(FILESYSTEM)?;
-            let label = string(block, "IdLabel")?;
-            if !label.eq_ignore_ascii_case(LABEL) || string(block, "IdType")? != "vfat" {
-                return None;
-            }
-            let device = block
-                .get("PreferredDevice")
-                .or_else(|| block.get("Device"))
-                .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
-                .map(|b| bytes_to_path(&b).to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let drive = block
-                .get("Drive")
-                .and_then(|v| OwnedObjectPath::try_from(v.try_clone().ok()?).ok())
-                .map(|p| p.as_str().to_string())
-                .filter(|p| p != "/");
-            let mount = filesystem
-                .get("MountPoints")
-                .and_then(|v| Vec::<Vec<u8>>::try_from(v.try_clone().ok()?).ok())
-                .and_then(|points| points.first().map(|p| bytes_to_path(p)));
-            Some(CardInfo {
-                block: path.as_str().to_string(),
-                device,
-                drive,
-                mount,
-            })
+            let info = volume(path, interfaces)?;
+            let kind = classify(
+                objects,
+                interfaces.get(BLOCK)?,
+                info.mount.as_deref(),
+                has_rockbox,
+            )?;
+            Some((kind, info))
         })
         .collect();
-    found.sort_by(|a, b| a.block.cmp(&b.block));
-    found.into_iter().next()
+    found.sort_by(|a, b| a.1.block.cmp(&b.1.block));
+    found
+}
+
+fn first(found: &[(Kind, CardInfo)], want: Kind) -> Option<CardInfo> {
+    found
+        .iter()
+        .find(|(kind, _)| *kind == want)
+        .map(|(_, info)| info.clone())
+}
+
+/// The first vfat filesystem labeled SANSA, or on the "SD Card Slot" drive.
+pub fn find_card(objects: &Objects) -> Option<CardInfo> {
+    first(&volumes_of(objects, &|_| false), Kind::Card)
+}
+
+/// The player's internal drive. Never matched by a label alone, except the
+/// stock firmware label on a USB drive.
+pub fn find_internal(objects: &Objects, has_rockbox: &dyn Fn(&Path) -> bool) -> Option<CardInfo> {
+    first(&volumes_of(objects, has_rockbox), Kind::Internal)
+}
+
+pub fn find_volumes(objects: &Objects, has_rockbox: &dyn Fn(&Path) -> bool) -> Volumes {
+    let found = volumes_of(objects, has_rockbox);
+    Volumes {
+        card: first(&found, Kind::Card),
+        internal: first(&found, Kind::Internal),
+    }
 }
 
 /// The text of a D-Bus error, without the wrapping.
@@ -99,10 +193,10 @@ impl Udisks {
         Proxy::new(&self.conn, DEST, path, interface).map_err(describe)
     }
 
-    pub fn scan(&self) -> Result<Option<CardInfo>, String> {
+    pub fn scan(&self) -> Result<Volumes, String> {
         let manager = self.proxy(ROOT, "org.freedesktop.DBus.ObjectManager")?;
         let objects: Objects = manager.call("GetManagedObjects", &()).map_err(describe)?;
-        Ok(find_card(&objects))
+        Ok(find_volumes(&objects, &crate::player::is_rockbox_volume))
     }
 
     /// Mounts the card when needed and returns where it is mounted.
@@ -117,9 +211,15 @@ impl Udisks {
             Err(e) => {
                 let text = describe(e);
                 // Another mounter won the race.
-                match self.scan() {
-                    Ok(Some(now)) if now.mount.is_some() => Ok(now.mount.unwrap_or_default()),
-                    _ => Err(text),
+                let now = self.scan().ok().and_then(|v| {
+                    [v.card, v.internal]
+                        .into_iter()
+                        .flatten()
+                        .find(|c| c.block == card.block)
+                });
+                match now.and_then(|c| c.mount) {
+                    Some(mount) => Ok(mount),
+                    None => Err(text),
                 }
             }
         }
@@ -147,16 +247,16 @@ impl Udisks {
         Ok(())
     }
 
-    /// Watches for the card on its own thread for the life of the app.
+    /// Watches for the volumes on their own thread for the life of the app.
     /// `on_connect` gets every new UDisks2 connection; `on_change` gets the
-    /// card now and whenever it appears, goes away, or is (un)mounted, and
+    /// volumes now and whenever one appears, goes away, or is (un)mounted, and
     /// errors while UDisks2 is unreachable. Lost connections are retried.
     pub fn watch(
         on_connect: impl Fn(Udisks) + Send + 'static,
-        mut on_change: impl FnMut(Result<Option<CardInfo>, String>) + Send + 'static,
+        mut on_change: impl FnMut(Result<Volumes, String>) + Send + 'static,
     ) {
         std::thread::spawn(move || {
-            let mut last: Option<Option<CardInfo>> = None;
+            let mut last: Option<Volumes> = None;
             let mut delay = RETRY_MIN;
             loop {
                 let outcome = Udisks::connect().and_then(|udisks| {
@@ -182,8 +282,8 @@ impl Udisks {
     /// Reports card changes until the signal stream fails or ends.
     fn follow(
         &self,
-        last: &mut Option<Option<CardInfo>>,
-        on_change: &mut impl FnMut(Result<Option<CardInfo>, String>),
+        last: &mut Option<Volumes>,
+        on_change: &mut impl FnMut(Result<Volumes, String>),
     ) -> Result<(), String> {
         let rule = MatchRule::builder()
             .msg_type(MessageType::Signal)
@@ -204,16 +304,16 @@ impl Udisks {
     }
 }
 
-fn report_change(
-    last: &mut Option<Option<CardInfo>>,
-    on_change: &mut impl FnMut(Result<Option<CardInfo>, String>),
-    now: Result<Option<CardInfo>, String>,
+fn report_change<T: Clone + PartialEq>(
+    last: &mut Option<T>,
+    on_change: &mut impl FnMut(Result<T, String>),
+    now: Result<T, String>,
 ) {
     match now {
-        Ok(card) if last.as_ref() == Some(&card) => {}
-        Ok(card) => {
-            *last = Some(card.clone());
-            on_change(Ok(card));
+        Ok(value) if last.as_ref() == Some(&value) => {}
+        Ok(value) => {
+            *last = Some(value.clone());
+            on_change(Ok(value));
         }
         Err(e) => {
             *last = None;
@@ -328,6 +428,92 @@ mod tests {
         let card = find_card(&all).unwrap();
         assert_eq!(card.mount, None);
         assert_eq!(card.drive, None);
+    }
+
+    const DRIVE_PATH: &str = "/org/freedesktop/UDisks2/drives/D";
+
+    fn drive_object(vendor: &str, model: &str, bus: &str) -> HashMap<String, Properties> {
+        let mut drive = Properties::new();
+        drive.insert("Vendor".into(), value(vendor));
+        drive.insert("Model".into(), value(model));
+        drive.insert("ConnectionBus".into(), value(bus));
+        HashMap::from([(DRIVE.to_string(), drive)])
+    }
+
+    fn player(
+        vendor: &str,
+        model: &str,
+        label: &str,
+        mount: Option<&str>,
+    ) -> Vec<(&'static str, HashMap<String, Properties>)> {
+        vec![
+            (DRIVE_PATH, drive_object(vendor, model, "usb")),
+            ("/o/b1", object(label, "vfat", mount, DRIVE_PATH)),
+        ]
+    }
+
+    fn never(_: &Path) -> bool {
+        false
+    }
+
+    #[test]
+    fn rockbox_internal_drive_is_found_by_model_whatever_its_label() {
+        for label in ["", "CLIPPLUS", "My Music"] {
+            let all = objects(player("Rockbox", "Internal Storage", label, None));
+            let found = find_internal(&all, &never).unwrap();
+            assert_eq!(found.drive.as_deref(), Some(DRIVE_PATH));
+            assert_eq!(find_card(&all), None);
+        }
+    }
+
+    #[test]
+    fn rockbox_microsd_is_found_by_model() {
+        let all = objects(player("Rockbox", "SD Card Slot", "Songs", None));
+        assert!(find_card(&all).is_some());
+        assert_eq!(find_internal(&all, &never), None);
+    }
+
+    #[test]
+    fn the_stock_label_finds_the_internal_drive_on_usb_only() {
+        let all = objects(player("SanDisk", "Sansa Clip+", "SANSA CLIPP", None));
+        assert!(find_internal(&all, &never).is_some());
+        assert_eq!(find_card(&all), None);
+        let mut internal_bus = player("SanDisk", "Disk", "SANSA CLIPP", None);
+        internal_bus[0].1 = drive_object("SanDisk", "Disk", "sdio");
+        assert_eq!(find_internal(&objects(internal_bus), &never), None);
+    }
+
+    #[test]
+    fn a_mounted_usb_drive_counts_when_its_files_say_rockbox() {
+        let mount = "/run/media/<user>/Anything";
+        let all = objects(player("Generic", "Flash", "Anything", Some(mount)));
+        assert_eq!(find_internal(&all, &never), None);
+        let seen = std::cell::RefCell::new(Vec::new());
+        let by_files = |path: &Path| {
+            seen.borrow_mut().push(path.to_path_buf());
+            true
+        };
+        let found = find_internal(&all, &by_files).unwrap();
+        assert_eq!(found.mount, Some(PathBuf::from(mount)));
+        assert_eq!(seen.borrow().as_slice(), [PathBuf::from(mount)]);
+        let unmounted = objects(player("Generic", "Flash", "Anything", None));
+        assert_eq!(find_internal(&unmounted, &|_| true), None);
+    }
+
+    #[test]
+    fn the_sansa_label_stays_a_card_and_both_volumes_are_reported() {
+        let mut items = player("Rockbox", "Internal Storage", "X", None);
+        items.push((
+            "/org/freedesktop/UDisks2/drives/E",
+            drive_object("Generic", "SD Reader", "usb"),
+        ));
+        items.push((
+            "/o/b2",
+            object("SANSA", "vfat", None, "/org/freedesktop/UDisks2/drives/E"),
+        ));
+        let volumes = find_volumes(&objects(items), &never);
+        assert!(volumes.internal.unwrap().block.ends_with("b1"));
+        assert!(volumes.card.unwrap().block.ends_with("b2"));
     }
 
     #[test]

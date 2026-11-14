@@ -1,5 +1,6 @@
 //! XDG locations and the small JSON files kept in them.
 
+use crate::rockbox::Channel;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::BTreeMap;
 use std::fs;
@@ -14,6 +15,7 @@ pub struct Dirs {
     pub downloads: PathBuf,
     pub outbox: PathBuf,
     pub tools: PathBuf,
+    pub rockbox: PathBuf,
     pub config_file: PathBuf,
     pub soulseek_file: PathBuf,
     pub jobs_file: PathBuf,
@@ -41,6 +43,7 @@ impl Dirs {
             downloads: data.join("downloads"),
             outbox: data.join("outbox"),
             tools: data.join("tools"),
+            rockbox: data.join("rockbox"),
             config_file: config.join("config.json"),
             soulseek_file: config.join("soulseek.json"),
             jobs_file: data.join("jobs.json"),
@@ -49,7 +52,7 @@ impl Dirs {
     }
 
     pub fn create(&self) -> io::Result<()> {
-        for dir in [&self.downloads, &self.outbox, &self.tools] {
+        for dir in [&self.downloads, &self.outbox, &self.tools, &self.rockbox] {
             fs::create_dir_all(dir)?;
         }
         if let Some(parent) = self.config_file.parent() {
@@ -111,11 +114,15 @@ pub fn now_secs() -> u64 {
 #[serde(default)]
 pub struct Config {
     pub sponsorblock: bool,
+    pub rockbox_channel: Channel,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { sponsorblock: true }
+        Self {
+            sponsorblock: true,
+            rockbox_channel: Channel::Dev,
+        }
     }
 }
 
@@ -149,6 +156,7 @@ mod tests {
         assert_eq!(dirs.downloads, Path::new("/d/clipplus-manager/downloads"));
         assert_eq!(dirs.outbox, Path::new("/d/clipplus-manager/outbox"));
         assert_eq!(dirs.tools, Path::new("/d/clipplus-manager/tools"));
+        assert_eq!(dirs.rockbox, Path::new("/d/clipplus-manager/rockbox"));
         assert_eq!(
             dirs.config_file,
             Path::new("/c/clipplus-manager/config.json")
@@ -170,10 +178,14 @@ mod tests {
             &path,
             &Config {
                 sponsorblock: false,
+                rockbox_channel: Channel::Daily,
             },
         )
         .unwrap();
-        assert!(!read_json::<Config>(&path).sponsorblock);
+        let saved = read_json::<Config>(&path);
+        assert!(!saved.sponsorblock);
+        assert_eq!(saved.rockbox_channel, Channel::Daily);
+        assert_eq!(Config::default().rockbox_channel, Channel::Dev);
     }
 
     #[test]
