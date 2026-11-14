@@ -42,6 +42,20 @@ pub fn get_json(agent: &ureq::Agent, url: &str) -> Result<serde_json::Value, Str
 
 /// Writes the body to `dest` and returns its SHA-256 as lowercase hex.
 pub fn download(agent: &ureq::Agent, url: &str, dest: &Path) -> Result<String, String> {
+    fetch(agent, url, dest, false)
+}
+
+/// Like `download`, and fails when the body is shorter than its Content-Length.
+pub fn download_checked(agent: &ureq::Agent, url: &str, dest: &Path) -> Result<String, String> {
+    fetch(agent, url, dest, true)
+}
+
+fn fetch(
+    agent: &ureq::Agent,
+    url: &str,
+    dest: &Path,
+    check_length: bool,
+) -> Result<String, String> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -49,17 +63,23 @@ pub fn download(agent: &ureq::Agent, url: &str, dest: &Path) -> Result<String, S
         .map_err(|e| e.to_string())?;
     let result = (|| {
         let mut response = agent.get(url).call().map_err(|e| format!("{url}: {e}"))?;
+        let expected = response.body().content_length();
         let mut reader = response.body_mut().with_config().limit(u64::MAX).reader();
 
         let mut hasher = Sha256::new();
         let mut buf = vec![0u8; 256 * 1024];
+        let mut written = 0u64;
         loop {
             let n = reader.read(&mut buf).map_err(|e| format!("{url}: {e}"))?;
             if n == 0 {
                 break;
             }
+            written += n as u64;
             hasher.update(&buf[..n]);
             file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        }
+        if check_length && expected.is_some_and(|n| n != written) {
+            return Err(format!("{url}: the download was cut short"));
         }
         file.sync_all().map_err(|e| e.to_string())?;
         Ok(hex(&hasher.finalize()))
