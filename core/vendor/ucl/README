@@ -1,0 +1,16 @@
+UCL data compression library (subset)
+
+Source: Rockbox, https://github.com/Rockbox/rockbox, path tools/ucl
+Commit: e56ef48f7c35575b68d5ccd5bb6e198bb23b6579
+
+Only what the NRV2E level 10 compressor and the safe decoder need is kept:
+src/ (alloc, n2e_99, n2e_ds, n2e_d, ucl_init, ucl_ptr, ucl_util and the .ch and
+header files they include), include/ucl/, and the acc/ headers that ucl_conf.h
+pulls in. Files are unmodified, license headers included.
+
+UCL is copyright Markus F.X.J. Oberhumer and licensed under GPL-2.0-or-later.
+COPYING is the GPL-2.0 text from docs/COPYING in the same Rockbox commit
+(tools/ucl has no copy of its own). acc/ACC_LICENSE is the ACC notice.
+
+The compressed output is part of a firmware image, so the code must not be
+changed: core/src/amsboot.rs checks sizes and md5 values against known results.

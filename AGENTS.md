@@ -17,6 +17,7 @@ The CI container is `registry.fedoraproject.org/fedora:45`, pinned by digest. Th
 ## Layout
 
 - `core/`: Qt-free library (`clipplus-manager-core`). Rules, fixer, transfer, yt-dlp, tools, engine, UDisks2, notifications, single instance, self update.
+- `core/vendor/`: vendored C (UCL compressor, GPL-2.0-or-later) for the bootloader patch.
 - `src/`: the Qt app. `bridge.rs` is the cxx-qt QObject (list model and app state), `main.rs` starts Qt.
 - `qml/`: the Kirigami UI, compiled into the binary.
 - `packaging/appimage/`: AppImage build and tool fetch scripts.
@@ -47,3 +48,5 @@ packaging/appimage/build.sh
 - **Fixer**: `plan()` picks the ffmpeg arguments that make a file playable, `verify()` rechecks the result.
 - **Managed tools**: ffmpeg, ffprobe, yt-dlp and deno, kept in the data folder and updated from their upstream releases. The AppImage bundles the versions current at build time.
 - **Self update**: the AppImage replaces itself from this repo's latest release, then asks for a restart.
+- **OF**: the stock SanDisk firmware file, `clppa.bin`.
+- **Bootloader**: the Rockbox bootloader patched into the OF. The player flashes it after unplug.
