@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const ICON: &str = include_str!("../../data/icons/dev.project516.sansa-dl.svg");
+const ICON: &str = include_str!("../../data/icons/dev.project516.clipplus-manager.svg");
 
 /// Quotes a path for a desktop entry Exec line.
 fn quote(path: &str) -> String {
@@ -31,7 +31,7 @@ pub fn desktop_entry(appimage: &Path) -> String {
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
-         Name=Sansa DL\n\
+         Name=ClipPlus Manager\n\
          GenericName=Music Downloader\n\
          Comment=Download music and copy it to a Sansa Clip+\n\
          Exec={} %U\n\
@@ -60,7 +60,7 @@ fn write_if_changed(path: &Path, content: &str) -> io::Result<bool> {
 /// Writes the launcher entry and icon under `data_home` when they differ.
 pub fn install(appimage: &Path, data_home: &Path) -> io::Result<()> {
     if appimage.to_string_lossy().chars().any(char::is_control) {
-        eprintln!("sansa-dl: launcher path contains a control character");
+        eprintln!("clipplus-manager: launcher path contains a control character");
         return Ok(());
     }
     let apps = data_home.join("applications");
@@ -99,10 +99,10 @@ mod tests {
 
     #[test]
     fn entry_has_the_required_keys() {
-        let entry = desktop_entry(Path::new("/opt/Sansa DL.AppImage"));
-        assert!(entry.contains("Exec=\"/opt/Sansa DL.AppImage\" %U\n"));
-        assert!(entry.contains("Icon=dev.project516.sansa-dl\n"));
-        assert!(entry.contains("StartupWMClass=dev.project516.sansa-dl\n"));
+        let entry = desktop_entry(Path::new("/opt/ClipPlus Manager.AppImage"));
+        assert!(entry.contains("Exec=\"/opt/ClipPlus Manager.AppImage\" %U\n"));
+        assert!(entry.contains("Icon=dev.project516.clipplus-manager\n"));
+        assert!(entry.contains("StartupWMClass=dev.project516.clipplus-manager\n"));
         assert!(entry.contains("Categories=AudioVideo;Audio;Network;Qt;KDE;\n"));
         assert!(entry.contains("MimeType=\n"));
         assert!(entry.contains("GenericName=Music Downloader\n"));
@@ -126,14 +126,14 @@ mod tests {
     #[test]
     fn install_writes_once() {
         let dir = tempfile::tempdir().unwrap();
-        let app = Path::new("/opt/sansa-dl.AppImage");
+        let app = Path::new("/opt/clipplus-manager.AppImage");
         install(app, dir.path()).unwrap();
         let entry = dir
             .path()
-            .join("applications/dev.project516.sansa-dl.desktop");
+            .join("applications/dev.project516.clipplus-manager.desktop");
         let icon = dir
             .path()
-            .join("icons/hicolor/scalable/apps/dev.project516.sansa-dl.svg");
+            .join("icons/hicolor/scalable/apps/dev.project516.clipplus-manager.svg");
         assert!(entry.exists() && icon.exists());
         let first = fs::metadata(&entry).unwrap().modified().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));

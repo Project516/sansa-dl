@@ -150,9 +150,9 @@ fn search_at(
         .header(
             "User-Agent",
             concat!(
-                "sansa-dl/",
+                "clipplus-manager/",
                 env!("CARGO_PKG_VERSION"),
-                " (https://github.com/Project516/sansa-dl)"
+                " (https://github.com/Project516/clipplus-manager)"
             ),
         )
         .query("query", lucene(query))
@@ -227,7 +227,11 @@ mod tests {
                 "{request}"
             );
             assert!(request.contains("fmt=json"));
-            assert!(request.to_lowercase().contains("user-agent: sansa-dl/"));
+            assert!(
+                request
+                    .to_lowercase()
+                    .contains("user-agent: clipplus-manager/")
+            );
             let body = r#"{"recordings":[{"id":"recording-id","title":"Song","length":123000,"artist-credit":[{"name":"First","joinphrase":" & "},{"name":"Second"}],"releases":[{"title":"Album"}]},{"id":"other-id","title":"Other"}]}"#;
             write!(
                 stream,

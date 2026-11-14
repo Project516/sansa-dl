@@ -169,7 +169,7 @@ impl Udisks {
                     result
                 });
                 if let Err(e) = outcome {
-                    eprintln!("sansa-dl: card watch: {e}");
+                    eprintln!("clipplus-manager: card watch: {e}");
                     last = None;
                     on_change(Err(e));
                 }

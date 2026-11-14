@@ -1,4 +1,4 @@
-# Sansa DL
+# ClipPlus Manager
 
 A small, fast, native KDE desktop app. The user pastes links, the app downloads audio as mp3, fixes each file so a SanDisk Sansa Clip+ plays it, and copies the songs to the player's SD card when it is plugged in.
 
@@ -16,7 +16,7 @@ The CI container is `registry.fedoraproject.org/fedora:45`, pinned by digest. Th
 
 ## Layout
 
-- `core/`: Qt-free library (`sansa-dl-core`). Rules, fixer, transfer, yt-dlp, tools, engine, UDisks2, notifications, single instance, self update.
+- `core/`: Qt-free library (`clipplus-manager-core`). Rules, fixer, transfer, yt-dlp, tools, engine, UDisks2, notifications, single instance, self update.
 - `src/`: the Qt app. `bridge.rs` is the cxx-qt QObject (list model and app state), `main.rs` starts Qt.
 - `qml/`: the Kirigami UI, compiled into the binary.
 - `packaging/appimage/`: AppImage build and tool fetch scripts.

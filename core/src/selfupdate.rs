@@ -6,15 +6,15 @@ use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-pub const CURRENT: &str = match option_env!("SANSA_DL_VERSION") {
+pub const CURRENT: &str = match option_env!("CLIPPLUS_VERSION") {
     Some(version) if !version.is_empty() => version,
     _ => env!("CARGO_PKG_VERSION"),
 };
 
-const RELEASE: &str = "https://api.github.com/repos/Project516/sansa-dl/releases/latest";
+const RELEASE: &str = "https://api.github.com/repos/Project516/clipplus-manager/releases/latest";
 
 pub fn asset_name(version: &str) -> String {
-    format!("sansa-dl-{version}-x86_64.AppImage")
+    format!("clipplus-manager-{version}-x86_64.AppImage")
 }
 
 /// Replaces `appimage` with a newer verified release. Returns the new version,
@@ -76,7 +76,7 @@ pub fn update_from(
     result.map(|()| Some(version))
 }
 
-const PART: &str = ".sansa-dl-update-";
+const PART: &str = ".clipplus-manager-update-";
 
 /// Removes downloads left by an update that was cut off.
 fn remove_parts(appimage: &Path) {
@@ -96,15 +96,19 @@ mod tests {
 
     #[test]
     fn asset_names_follow_the_release_convention() {
-        assert_eq!(asset_name("0.1.7"), "sansa-dl-0.1.7-x86_64.AppImage");
+        assert_eq!(
+            asset_name("0.1.7"),
+            "clipplus-manager-0.1.7-x86_64.AppImage"
+        );
     }
 
     #[test]
     fn removes_only_update_parts() {
-        let dir = std::env::temp_dir().join(format!("sansa-dl-parts-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("clipplus-manager-parts-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        let app = dir.join("sansa-dl.AppImage");
-        let part = dir.join(".sansa-dl-update-abc.part");
+        let app = dir.join("clipplus-manager.AppImage");
+        let part = dir.join(".clipplus-manager-update-abc.part");
         let other = dir.join("other.part");
         for f in [&app, &part, &other] {
             fs::write(f, b"x").unwrap();

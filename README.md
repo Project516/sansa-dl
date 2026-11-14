@@ -1,6 +1,6 @@
-# Sansa DL
+# ClipPlus Manager
 
-Sansa DL is a small KDE app that turns links into songs for a SanDisk Sansa Clip+. Paste YouTube links, or any link yt-dlp supports. The app downloads the audio as mp3, makes each file playable on the Sansa, and copies the songs to the player's SD card when you plug it in.
+ClipPlus Manager is a small KDE app that turns links into songs for a SanDisk Sansa Clip+. Paste YouTube links, or any link yt-dlp supports. The app downloads the audio as mp3, makes each file playable on the Sansa, and copies the songs to the player's SD card when you plug it in.
 
 ## What it does
 
@@ -15,9 +15,9 @@ Sansa DL is a small KDE app that turns links into songs for a SanDisk Sansa Clip
 
 ## Install
 
-1. Download `sansa-dl-<version>-x86_64.AppImage` from the [Releases](https://github.com/Project516/sansa-dl/releases) page.
-2. Make it executable: `chmod +x sansa-dl-*.AppImage`.
-3. Run it once. It adds a launcher entry, so "Sansa DL" shows up in the application menu from then on.
+1. Download `clipplus-manager-<version>-x86_64.AppImage` from the [Releases](https://github.com/Project516/clipplus-manager/releases) page.
+2. Make it executable: `chmod +x clipplus-manager-*.AppImage`.
+3. Run it once. It adds a launcher entry, so "ClipPlus Manager" shows up in the application menu from then on.
 
 The app updates itself once a day. After an update it asks you to restart.
 
@@ -33,29 +33,29 @@ The app updates itself once a day. After an update it asks you to restart.
 
 Paste one or more links into the field and press Enter or Add. You can also drop links on the window. The field clears at once, so you can paste the next link right away.
 
-To search by artist or song, choose **Find music** and select a recording and an available file. The app installs and updates slskd automatically. The first time, it makes a Soulseek account with a random name and saves it in `~/.config/sansa-dl/soulseek.json`; put your own `username` and `password` there to use your account instead. Queued Soulseek downloads resume when the app starts.
+To search by artist or song, choose **Find music** and select a recording and an available file. The app installs and updates slskd automatically. The first time, it makes a Soulseek account with a random name and saves it in `~/.config/clipplus-manager/soulseek.json`; put your own `username` and `password` there to use your account instead. Queued Soulseek downloads resume when the app starts.
 
 ```
-./sansa-dl-<version>-x86_64.AppImage <link>...   add links to the running window, or start the app with them
-./sansa-dl-<version>-x86_64.AppImage --eject     eject the card, as the Eject button does
+./clipplus-manager-<version>-x86_64.AppImage <link>...   add links to the running window, or start the app with them
+./clipplus-manager-<version>-x86_64.AppImage --eject     eject the card, as the Eject button does
 ```
 
 The launcher entry runs the same AppImage.
 
 When the Sansa's card is plugged in (a FAT32 volume labeled `SANSA`), the app mounts it and copies the waiting songs. A desktop notification tells you how many were copied and offers Eject.
 
-Songs are stored in `~/.local/share/sansa-dl/`: `downloads/` while a song downloads, `outbox/` while it waits for the card. The settings file is `~/.config/sansa-dl/config.json`.
+Songs are stored in `~/.local/share/clipplus-manager/`: `downloads/` while a song downloads, `outbox/` while it waits for the card. The settings file is `~/.config/clipplus-manager/config.json`.
 
 ## Remove the launcher entry
 
 Delete these two files:
 
 ```
-~/.local/share/applications/dev.project516.sansa-dl.desktop
-~/.local/share/icons/hicolor/scalable/apps/dev.project516.sansa-dl.svg
+~/.local/share/applications/dev.project516.clipplus-manager.desktop
+~/.local/share/icons/hicolor/scalable/apps/dev.project516.clipplus-manager.svg
 ```
 
-To remove everything the app stored, also delete `~/.local/share/sansa-dl` and `~/.config/sansa-dl`.
+To remove everything the app stored, also delete `~/.local/share/clipplus-manager` and `~/.config/clipplus-manager`.
 
 ## Build from source
 
@@ -73,7 +73,7 @@ The tests that make audio fixtures need an `ffmpeg` with the LAME encoder on `PA
 
 ## Browser version
 
-The browser version is at https://project516.dev/sansa-dl/. GitHub Pages deploys
+The browser version is at https://project516.dev/clipplus-manager/. GitHub Pages deploys
 it from `web/` on every push to `master` that changes it.
 
 It downloads one song as an MP3 for manual transfer to the

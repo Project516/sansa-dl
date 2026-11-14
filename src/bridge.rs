@@ -148,15 +148,15 @@ pub mod qobject {
 }
 
 use crate::{INITIAL_LINKS, INSTANCE};
+use clipplus_manager_core::engine::{self, Emit, Engine, JobView, UiEvent};
+use clipplus_manager_core::instance::{Command, Instance};
+use clipplus_manager_core::paths::Dirs;
+use clipplus_manager_core::queue::parse_links;
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{
     QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant, QVector,
 };
-use sansa_dl_core::engine::{self, Emit, Engine, JobView, UiEvent};
-use sansa_dl_core::instance::{Command, Instance};
-use sansa_dl_core::paths::Dirs;
-use sansa_dl_core::queue::parse_links;
 use std::sync::Arc;
 
 const ROLE_BASE: i32 = 0x100;
@@ -187,7 +187,7 @@ pub struct BackendRust {
     search_error: QString,
     searching: bool,
     search_generation: u64,
-    music_rows: Vec<sansa_dl_core::musicbrainz::Recording>,
+    music_rows: Vec<clipplus_manager_core::musicbrainz::Recording>,
     soulseek_ready: bool,
     soulseek_status: QString,
     peer_results: QString,
@@ -382,7 +382,7 @@ impl qobject::Backend {
         self.as_mut().set_searching(true);
         let qt = self.qt_thread();
         std::thread::spawn(move || {
-            let result = sansa_dl_core::musicbrainz::search(&query);
+            let result = clipplus_manager_core::musicbrainz::search(&query);
             let _ = qt.queue(move |mut backend| {
                 if backend.rust().search_generation != generation {
                     return;
@@ -491,7 +491,7 @@ impl qobject::Backend {
             }
             Err(error) => {
                 let message = format!("Could not restart: {error}");
-                eprintln!("sansa-dl: {message}");
+                eprintln!("clipplus-manager: {message}");
                 self.as_mut().set_restart_error(QString::from(&message));
                 false
             }

@@ -60,12 +60,12 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "$VERSION" ]; then export SANSA_DL_VERSION="$VERSION"; fi
+          if [ -n "$VERSION" ]; then export CLIPPLUS_VERSION="$VERSION"; fi
           packaging/appimage/build.sh
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: sansa-dl-appimage
+          name: clipplus-manager-appimage
           path: |
             dist/*.AppImage
             dist/*.AppImage.sha256

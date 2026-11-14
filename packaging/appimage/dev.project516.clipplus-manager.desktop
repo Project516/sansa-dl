@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=Sansa DL
+Name=ClipPlus Manager
 GenericName=Music Downloader
 Comment=Download music and copy it to a Sansa Clip+
-Exec=sansa-dl %U
-Icon=dev.project516.sansa-dl
+Exec=clipplus-manager %U
+Icon=dev.project516.clipplus-manager
 Terminal=false
 Categories=AudioVideo;Audio;Network;Qt;KDE;
-StartupWMClass=dev.project516.sansa-dl
+StartupWMClass=dev.project516.clipplus-manager
 MimeType=

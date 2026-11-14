@@ -1274,7 +1274,10 @@ impl Core {
         }
         for staged in self.staged.drain(..) {
             if let Err(e) = tools::install(&staged, &self.dirs.tools) {
-                eprintln!("sansa-dl: could not install {}: {e}", staged.tool.key());
+                eprintln!(
+                    "clipplus-manager: could not install {}: {e}",
+                    staged.tool.key()
+                );
             }
         }
         self.tools = Resolved::load(&self.dirs.tools, self.bundled.as_deref());
@@ -1557,7 +1560,10 @@ fn discover(ytdlp: &Path, deno: &Path, url: &str, cancel: &Cancel) -> Result<Fou
 
 /// The row gets plain text; the full yt-dlp message goes to the log.
 fn failure(url: &str, stderr: &str) -> String {
-    eprintln!("sansa-dl: yt-dlp failed for {url}: {}", stderr.trim());
+    eprintln!(
+        "clipplus-manager: yt-dlp failed for {url}: {}",
+        stderr.trim()
+    );
     ytdlp::plain_reason(stderr)
 }
 
@@ -1720,7 +1726,7 @@ fn spawn_updater(
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    eprintln!("sansa-dl: {} update: {e}", tool.key());
+                    eprintln!("clipplus-manager: {} update: {e}", tool.key());
                     report.errors.push(format!("{}: {e}", tool.key()));
                 }
             }
@@ -1743,7 +1749,7 @@ fn spawn_updater(
                 Ok(Some(version)) => report.updated.push(format!("slskd to {version}")),
                 Ok(None) => {}
                 Err(e) => {
-                    eprintln!("sansa-dl: slskd update: {e}");
+                    eprintln!("clipplus-manager: slskd update: {e}");
                     report.errors.push(format!("slskd: {e}"));
                 }
             }
@@ -1752,7 +1758,7 @@ fn spawn_updater(
             let now = now_secs();
             if force || state.due("app", now) {
                 let result = selfupdate::update(&agent, &appimage, &app_version, &|v| {
-                    note(format!("Downloading Sansa DL {v}"))
+                    note(format!("Downloading ClipPlus Manager {v}"))
                 });
                 // Saved after the attempt, so quitting mid-download retries next launch.
                 state.checked.insert("app".into(), now);
@@ -1764,8 +1770,8 @@ fn spawn_updater(
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        eprintln!("sansa-dl: app update: {e}");
-                        report.errors.push(format!("Sansa DL: {e}"));
+                        eprintln!("clipplus-manager: app update: {e}");
+                        report.errors.push(format!("ClipPlus Manager: {e}"));
                     }
                 }
             }

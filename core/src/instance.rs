@@ -1,11 +1,11 @@
-//! One running app. A second `sansa-dl <link>` hands its links to the first.
+//! One running app. A second `clipplus-manager <link>` hands its links to the first.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use zbus::blocking::{Connection, Proxy, connection};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
 
-pub const BUS_NAME: &str = "dev.project516.SansaDl";
-pub const OBJECT_PATH: &str = "/dev/project516/SansaDl";
+pub const BUS_NAME: &str = "dev.project516.ClipPlusManager";
+pub const OBJECT_PATH: &str = "/dev/project516/ClipPlusManager";
 
 /// What another process asks of the running window.
 pub enum Command {
@@ -18,7 +18,7 @@ struct Service {
     opened: Sender<Command>,
 }
 
-#[zbus::interface(name = "dev.project516.SansaDl")]
+#[zbus::interface(name = "dev.project516.ClipPlusManager")]
 impl Service {
     /// Links to add. An empty list only raises the window.
     fn open(&self, urls: Vec<String>) {
@@ -50,7 +50,7 @@ pub fn claim(urls: &[String], restart: bool) -> Role {
     let conn = match built {
         Ok(conn) => conn,
         Err(e) => {
-            eprintln!("sansa-dl: no single-instance service: {e}");
+            eprintln!("clipplus-manager: no single-instance service: {e}");
             return Role::Primary(None);
         }
     };
@@ -75,12 +75,12 @@ pub fn claim(urls: &[String], restart: bool) -> Role {
         Ok(_) | Err(zbus::Error::NameTaken) => match forward(urls) {
             Ok(()) => Role::Forwarded,
             Err(e) => {
-                eprintln!("sansa-dl: could not reach the running window: {e}");
+                eprintln!("clipplus-manager: could not reach the running window: {e}");
                 Role::Primary(None)
             }
         },
         Err(e) => {
-            eprintln!("sansa-dl: no single-instance service: {e}");
+            eprintln!("clipplus-manager: no single-instance service: {e}");
             Role::Primary(None)
         }
     }

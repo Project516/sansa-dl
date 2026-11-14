@@ -2,12 +2,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
-import dev.project516.sansadl
+import dev.project516.clipplusmanager
 
 Kirigami.ApplicationWindow {
     id: root
 
-    title: "Sansa DL"
+    title: "ClipPlus Manager"
     width: Kirigami.Units.gridUnit * 36
     height: Kirigami.Units.gridUnit * 30
     minimumWidth: Kirigami.Units.gridUnit * 20
