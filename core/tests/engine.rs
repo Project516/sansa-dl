@@ -2,8 +2,8 @@
 //! Card detection and updates are off, so no card or network is touched.
 //! Skips without an ffmpeg that has LAME.
 
-use sansa_dl_core::engine::{self, Emit, Engine, JobView, Options, UiEvent};
-use sansa_dl_core::paths::Dirs;
+use clipplus_manager_core::engine::{self, Emit, Engine, JobView, Options, UiEvent};
+use clipplus_manager_core::paths::Dirs;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -278,11 +278,11 @@ fn shutdown_keeps_a_running_download_resumable() {
     rig.engine.shutdown();
     std::thread::sleep(Duration::from_millis(500));
     let saved = fs::read_to_string(&rig.dirs.jobs_file).unwrap();
-    let jobs: Vec<sansa_dl_core::queue::Job> = serde_json::from_str(&saved).unwrap();
-    assert_ne!(jobs[0].stage, sansa_dl_core::queue::Stage::Failed);
+    let jobs: Vec<clipplus_manager_core::queue::Job> = serde_json::from_str(&saved).unwrap();
+    assert_ne!(jobs[0].stage, clipplus_manager_core::queue::Stage::Failed);
     assert_eq!(
-        sansa_dl_core::queue::restore(jobs)[0].stage,
-        sansa_dl_core::queue::Stage::Waiting
+        clipplus_manager_core::queue::restore(jobs)[0].stage,
+        clipplus_manager_core::queue::Stage::Waiting
     );
 }
 

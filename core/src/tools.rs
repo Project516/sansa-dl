@@ -294,11 +294,11 @@ impl Resolved {
 
 /// The bundled tools of an AppImage, or a directory named by the environment.
 pub fn bundled_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("SANSA_DL_BUNDLED_TOOLS") {
+    if let Some(dir) = std::env::var_os("CLIPPLUS_BUNDLED_TOOLS") {
         return Some(PathBuf::from(dir));
     }
     let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?.parent()?.join("lib/sansa-dl/tools");
+    let dir = exe.parent()?.parent()?.join("lib/clipplus-manager/tools");
     dir.is_dir().then_some(dir)
 }
 

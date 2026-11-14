@@ -278,6 +278,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
+name = "clipplus-manager"
+version = "0.1.0"
+dependencies = [
+ "clipplus-manager-core",
+ "cxx",
+ "cxx-qt",
+ "cxx-qt-build",
+ "cxx-qt-lib",
+ "cxx-qt-lib-extras",
+ "serde_json",
+]
+
+[[package]]
+name = "clipplus-manager-core"
+version = "0.1.0"
+dependencies = [
+ "liblzma",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tungstenite",
+ "ureq",
+ "zbus",
+ "zip",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1154,36 +1184,6 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
-
-[[package]]
-name = "sansa-dl"
-version = "0.1.0"
-dependencies = [
- "cxx",
- "cxx-qt",
- "cxx-qt-build",
- "cxx-qt-lib",
- "cxx-qt-lib-extras",
- "sansa-dl-core",
- "serde_json",
-]
-
-[[package]]
-name = "sansa-dl-core"
-version = "0.1.0"
-dependencies = [
- "liblzma",
- "rustix",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "tempfile",
- "tungstenite",
- "ureq",
- "zbus",
- "zip",
-]
 
 [[package]]
 name = "scratch"

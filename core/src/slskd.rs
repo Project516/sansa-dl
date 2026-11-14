@@ -50,7 +50,7 @@ pub fn account(path: &Path) -> Result<Account, String> {
         Err(_) => {}
     }
     let account = Account {
-        username: format!("sansadl{}", &random_hex()?[..10]),
+        username: format!("clipplus{}", &random_hex()?[..10]),
         password: random_hex()?,
     };
     if let Some(parent) = path.parent() {
@@ -498,7 +498,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config/soulseek.json");
         let made = account(&path).unwrap();
-        assert!(made.username.starts_with("sansadl") && made.username.len() == 17);
+        assert!(made.username.starts_with("clipplus") && made.username.len() == 18);
         assert_eq!(made.password.len(), 48);
         assert_eq!(account(&path).unwrap(), made);
         assert_eq!(

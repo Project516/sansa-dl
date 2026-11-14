@@ -1,7 +1,7 @@
 //! Runs the fixer against small files made with ffmpeg. Skips without ffmpeg.
 
-use sansa_dl_core::fixer::{self, Ffmpeg};
-use sansa_dl_core::rules::{self, ID3_LIMIT};
+use clipplus_manager_core::fixer::{self, Ffmpeg};
+use clipplus_manager_core::rules::{self, ID3_LIMIT};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

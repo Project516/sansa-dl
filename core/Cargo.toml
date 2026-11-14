@@ -1,6 +1,6 @@
 [package]
-name = "sansa-dl-core"
-description = "The Qt-free parts of sansa-dl"
+name = "clipplus-manager-core"
+description = "The Qt-free parts of clipplus-manager"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

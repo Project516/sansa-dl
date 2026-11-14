@@ -6,7 +6,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub const APP_ID: &str = "dev.project516.sansa-dl";
+pub const APP_ID: &str = "dev.project516.clipplus-manager";
 
 #[derive(Debug, Clone)]
 pub struct Dirs {
@@ -30,8 +30,8 @@ fn xdg(var: &str, fallback: &str) -> PathBuf {
 impl Dirs {
     pub fn from_env() -> Self {
         Self::under(
-            &xdg("XDG_DATA_HOME", ".local/share").join("sansa-dl"),
-            &xdg("XDG_CONFIG_HOME", ".config").join("sansa-dl"),
+            &xdg("XDG_DATA_HOME", ".local/share").join("clipplus-manager"),
+            &xdg("XDG_CONFIG_HOME", ".config").join("clipplus-manager"),
         )
     }
 
@@ -67,10 +67,10 @@ pub fn read_json_checked<T: DeserializeOwned + Default>(path: &Path) -> (T, bool
         Err(e) if e.kind() == io::ErrorKind::NotFound => (T::default(), true),
         Err(e) => {
             let bad = free_backup_name(path);
-            eprintln!("sansa-dl: could not read {}: {e}", path.display());
+            eprintln!("clipplus-manager: could not read {}: {e}", path.display());
             if let Err(rename_error) = fs::rename(path, &bad) {
                 eprintln!(
-                    "sansa-dl: could not preserve {}: {rename_error}",
+                    "clipplus-manager: could not preserve {}: {rename_error}",
                     path.display()
                 );
             }
@@ -142,11 +142,17 @@ mod tests {
 
     #[test]
     fn layout_follows_the_given_roots() {
-        let dirs = Dirs::under(Path::new("/d/sansa-dl"), Path::new("/c/sansa-dl"));
-        assert_eq!(dirs.downloads, Path::new("/d/sansa-dl/downloads"));
-        assert_eq!(dirs.outbox, Path::new("/d/sansa-dl/outbox"));
-        assert_eq!(dirs.tools, Path::new("/d/sansa-dl/tools"));
-        assert_eq!(dirs.config_file, Path::new("/c/sansa-dl/config.json"));
+        let dirs = Dirs::under(
+            Path::new("/d/clipplus-manager"),
+            Path::new("/c/clipplus-manager"),
+        );
+        assert_eq!(dirs.downloads, Path::new("/d/clipplus-manager/downloads"));
+        assert_eq!(dirs.outbox, Path::new("/d/clipplus-manager/outbox"));
+        assert_eq!(dirs.tools, Path::new("/d/clipplus-manager/tools"));
+        assert_eq!(
+            dirs.config_file,
+            Path::new("/c/clipplus-manager/config.json")
+        );
     }
 
     #[test]

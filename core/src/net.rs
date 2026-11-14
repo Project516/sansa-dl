@@ -8,7 +8,7 @@ use std::time::Duration;
 
 pub fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
-        .user_agent(concat!("sansa-dl/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("clipplus-manager/", env!("CARGO_PKG_VERSION")))
         .timeout_connect(Some(Duration::from_secs(20)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
         .timeout_recv_body(Some(Duration::from_secs(30 * 60)))

@@ -35,7 +35,7 @@ fn send(count: usize, on_eject: impl FnOnce()) -> zbus::Result<()> {
     let id: u32 = proxy.call(
         "Notify",
         &(
-            "Sansa DL",
+            "ClipPlus Manager",
             0u32,
             APP_ID,
             summary,

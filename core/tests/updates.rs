@@ -1,8 +1,8 @@
 //! Self update and tool staging against a local HTTP server.
 
-use sansa_dl_core::net;
-use sansa_dl_core::selfupdate;
-use sansa_dl_core::tools::{self, Latest, Staged, Tool};
+use clipplus_manager_core::net;
+use clipplus_manager_core::selfupdate;
+use clipplus_manager_core::tools::{self, Latest, Staged, Tool};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -78,7 +78,7 @@ fn files_in(dir: &Path) -> Vec<String> {
 fn a_newer_release_replaces_the_appimage() {
     let base = serve_release("v0.2.5", &sha(NEW_APP));
     let dir = tempfile::tempdir().unwrap();
-    let app = dir.path().join("sansa-dl.AppImage");
+    let app = dir.path().join("clipplus-manager.AppImage");
     fs::write(&app, b"old").unwrap();
 
     let updated = selfupdate::update_from(
@@ -98,7 +98,7 @@ fn a_newer_release_replaces_the_appimage() {
     );
     assert_eq!(
         files_in(dir.path()),
-        ["sansa-dl.AppImage"],
+        ["clipplus-manager.AppImage"],
         "no temp file is left"
     );
 }
@@ -107,7 +107,7 @@ fn a_newer_release_replaces_the_appimage() {
 fn the_current_release_changes_nothing() {
     let base = serve_release("v0.1.9", &sha(NEW_APP));
     let dir = tempfile::tempdir().unwrap();
-    let app = dir.path().join("sansa-dl.AppImage");
+    let app = dir.path().join("clipplus-manager.AppImage");
     fs::write(&app, b"old").unwrap();
     let updated = selfupdate::update_from(
         &net::agent(),
@@ -125,7 +125,7 @@ fn the_current_release_changes_nothing() {
 fn a_bad_checksum_keeps_the_old_appimage() {
     let base = serve_release("v0.2.5", &sha(b"something else"));
     let dir = tempfile::tempdir().unwrap();
-    let app = dir.path().join("sansa-dl.AppImage");
+    let app = dir.path().join("clipplus-manager.AppImage");
     fs::write(&app, b"old").unwrap();
     let err = selfupdate::update_from(
         &net::agent(),
@@ -137,7 +137,7 @@ fn a_bad_checksum_keeps_the_old_appimage() {
     .unwrap_err();
     assert!(err.contains("checksum"));
     assert_eq!(fs::read(&app).unwrap(), b"old");
-    assert_eq!(files_in(dir.path()), ["sansa-dl.AppImage"]);
+    assert_eq!(files_in(dir.path()), ["clipplus-manager.AppImage"]);
 }
 
 const FAKE_YTDLP: &[u8] = b"#!/bin/sh\necho 2099.01.01\n";
